@@ -1,0 +1,16 @@
+{
+  "version": "0.0.12",
+  "name": "@water-cooler-studios/monad-contracts-core",
+  "description": "Smart contracts and deployments for Monad",
+  "type": "module",
+  "scripts": {
+    "anvil": "anvil --code-size-limit 128000",
+    "deployCore": "forge script DeployCore --rpc-url monad_testnet",
+    "deployCore:local": "forge script DeployCore --rpc-url anvil --broadcast"
+  },
+  "files": [
+    "out/KintsuBetaERC1155.sol/*",
+    "out/StakedMonad.sol/*",
+    "!out/*/31337_deployment.json"
+  ]
+}
