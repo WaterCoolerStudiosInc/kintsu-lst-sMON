@@ -113,6 +113,23 @@ contract RegistryTest is Test, StakerFaker {
         stakedMonad.addNode(nodeId);
     }
 
+    function test_addNode_can_add_node_again_after_removal() public {
+        vm.startPrank(ADMIN);
+
+        // Add node
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+        assertEq(stakedMonad.getNodes().length, 1);
+
+        // Remove node
+        stakedMonad.removeNode(nodeId);
+        assertEq(stakedMonad.getNodes().length, 0);
+
+        // Add node again
+        stakedMonad.addNode(nodeId);
+        assertEq(stakedMonad.getNodes().length, 1);
+    }
+
     function test_addNode_must_have_role() public {
         vm.startPrank(BOB);
 
@@ -187,6 +204,35 @@ contract RegistryTest is Test, StakerFaker {
         assertEq(stakedMonad.totalWeight(), 0);
     }
 
+    function test_updateWeights_skips_decrease_weight_of_invalid_node() public {
+        vm.startPrank(ADMIN);
+
+        // Add one valid node
+        uint64 validNodeId = 1;
+        uint64 invalidNodeId = 404;
+        stakedMonad.addNode(validNodeId);
+
+        // Increase weight of valid node by 100
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: validNodeId, delta: 100, isIncreasing: true });
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Decrease weight of valid node and invalid node by 99e18
+        weightDeltas = new Registry.WeightDelta[](2);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: validNodeId, delta: 99, isIncreasing: false });
+        weightDeltas[1] = Registry.WeightDelta({nodeId: invalidNodeId, delta: 99, isIncreasing: false });
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Ensure invalid node was not added
+        vm.expectRevert(CustomErrors.InvalidNode.selector);
+        stakedMonad.viewNodeByNodeId(invalidNodeId);
+        assertEq(stakedMonad.getNodes().length, 1);
+
+        // Ensure valid node weight was applied
+        assertEq(stakedMonad.viewNodeByNodeId(validNodeId).weight, 100 - 99);
+        assertEq(stakedMonad.totalWeight(), 100 - 99);
+    }
+
     function test_updateWeights_must_have_role() public {
         uint64 nodeId = 1;
 
@@ -219,10 +265,24 @@ contract RegistryTest is Test, StakerFaker {
         stakedMonad.updateWeights(weightDeltas);
     }
 
-    function test_disableNode_sets_weight_to_zero() public {
-        uint64 nodeId = 1;
-
+    function test_disableNode_flags_node_as_disabled() public {
+        // Add node
         vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        assertFalse(stakedMonad.isNodeDisabled(nodeId));
+
+        // Disable node
+        stakedMonad.disableNode(nodeId);
+
+        assertTrue(stakedMonad.isNodeDisabled(nodeId));
+    }
+
+    function test_disableNode_sets_weight_to_zero() public {
+        // Add node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
         stakedMonad.addNode(nodeId);
 
         // Increase weight to 100e18
@@ -237,6 +297,20 @@ contract RegistryTest is Test, StakerFaker {
 
         assertEq(stakedMonad.viewNodeByNodeId(nodeId).weight, 0);
         assertEq(stakedMonad.totalWeight(), 0);
+    }
+
+    function test_disableNode_cannot_disable_an_already_disabled_node() public {
+        // Add node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Disable node
+        stakedMonad.disableNode(nodeId);
+
+        // Ensure disabled node cannot be disabled again
+        vm.expectRevert(CustomErrors.NoChange.selector);
+        stakedMonad.disableNode(nodeId);
     }
 
     function test_disableNode_must_have_role() public {
@@ -331,5 +405,119 @@ contract RegistryTest is Test, StakerFaker {
         assertGt(stakedMonad.viewNodeByNodeId(nodeId).staked, 0);
         vm.expectRevert(CustomErrors.ActiveNode.selector);
         stakedMonad.removeNode(nodeId);
+    }
+
+    function test_removeNode_can_handle_removing_first_node() public {
+        // Add nodes
+        vm.startPrank(ADMIN);
+        stakedMonad.addNode(1);
+        stakedMonad.addNode(2);
+        stakedMonad.addNode(3);
+        stakedMonad.addNode(4);
+
+        // Ensure nodes are stored in order [1,2,3,4]
+        Registry.Node[] memory nodesBefore = stakedMonad.getNodes();
+        assertEq(nodesBefore.length, 4);
+        assertEq(nodesBefore[0].id, 1);
+        assertEq(nodesBefore[1].id, 2);
+        assertEq(nodesBefore[2].id, 3);
+        assertEq(nodesBefore[3].id, 4);
+
+        // Remove first node
+        stakedMonad.removeNode(1);
+
+        // Ensure nodeId:1 is removed and replaced with nodeId:4
+        // Ensure nodes are stored in order [4,2,3]
+        Registry.Node[] memory nodesAfter = stakedMonad.getNodes();
+        assertEq(nodesAfter.length, 3);
+        assertEq(nodesAfter[0].id, 4);
+        assertEq(nodesAfter[1].id, 2);
+        assertEq(nodesAfter[2].id, 3);
+
+        // Ensure removed node cannot be viewed
+        vm.expectRevert(CustomErrors.InvalidNode.selector);
+        stakedMonad.viewNodeByNodeId(1);
+
+        // Ensure removed nodeId is not maintained
+        uint256[] memory nodeIds = stakedMonad.getNodeIds();
+        for (uint256 i; i < nodeIds.length; ++i) {
+            assertNotEq(nodeIds[i], 1);
+        }
+    }
+
+    function test_removeNode_can_handle_removing_middle_node() public {
+        // Add nodes
+        vm.startPrank(ADMIN);
+        stakedMonad.addNode(1);
+        stakedMonad.addNode(2);
+        stakedMonad.addNode(3);
+        stakedMonad.addNode(4);
+
+        // Ensure nodes are stored in order [1,2,3,4]
+        Registry.Node[] memory nodesBefore = stakedMonad.getNodes();
+        assertEq(nodesBefore.length, 4);
+        assertEq(nodesBefore[0].id, 1);
+        assertEq(nodesBefore[1].id, 2);
+        assertEq(nodesBefore[2].id, 3);
+        assertEq(nodesBefore[3].id, 4);
+
+        // Remove middle node
+        stakedMonad.removeNode(2);
+
+        // Ensure nodeId:2 is removed and replaced with nodeId:4
+        // Ensure nodes are stored in order [1,4,3]
+        Registry.Node[] memory nodesAfter = stakedMonad.getNodes();
+        assertEq(nodesAfter.length, 3);
+        assertEq(nodesAfter[0].id, 1);
+        assertEq(nodesAfter[1].id, 4);
+        assertEq(nodesAfter[2].id, 3);
+
+        // Ensure removed node cannot be viewed
+        vm.expectRevert(CustomErrors.InvalidNode.selector);
+        stakedMonad.viewNodeByNodeId(2);
+
+        // Ensure removed nodeId is not maintained
+        uint256[] memory nodeIds = stakedMonad.getNodeIds();
+        for (uint256 i; i < nodeIds.length; ++i) {
+            assertNotEq(nodeIds[i], 2);
+        }
+    }
+
+    function test_removeNode_can_handle_removing_last_node() public {
+        // Add nodes
+        vm.startPrank(ADMIN);
+        stakedMonad.addNode(1);
+        stakedMonad.addNode(2);
+        stakedMonad.addNode(3);
+        stakedMonad.addNode(4);
+
+        // Ensure nodes are stored in order [1,2,3,4]
+        Registry.Node[] memory nodesBefore = stakedMonad.getNodes();
+        assertEq(nodesBefore.length, 4);
+        assertEq(nodesBefore[0].id, 1);
+        assertEq(nodesBefore[1].id, 2);
+        assertEq(nodesBefore[2].id, 3);
+        assertEq(nodesBefore[3].id, 4);
+
+        // Remove last node
+        stakedMonad.removeNode(4);
+
+        // Ensure nodeId:4 is removed
+        // Ensure nodes are stored in order [1,2,3]
+        Registry.Node[] memory nodesAfter = stakedMonad.getNodes();
+        assertEq(nodesAfter.length, 3);
+        assertEq(nodesAfter[0].id, 1);
+        assertEq(nodesAfter[1].id, 2);
+        assertEq(nodesAfter[2].id, 3);
+
+        // Ensure removed node cannot be viewed
+        vm.expectRevert(CustomErrors.InvalidNode.selector);
+        stakedMonad.viewNodeByNodeId(4);
+
+        // Ensure removed nodeId is not maintained
+        uint256[] memory nodeIds = stakedMonad.getNodeIds();
+        for (uint256 i; i < nodeIds.length; ++i) {
+            assertNotEq(nodeIds[i], 4);
+        }
     }
 }
