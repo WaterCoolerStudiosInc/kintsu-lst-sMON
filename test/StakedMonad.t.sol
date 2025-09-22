@@ -473,6 +473,49 @@ contract StakedMonadTest is Test, StakerFaker {
         assertEq(balanceIncrease, returnedResult);
     }
 
+    function test_instant_unlock_creates_protocol_fees() public {
+        // Add 1 node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Ensure instant unlock is enabled
+        assertTrue(stakedMonad.isInstantUnlockEnabled());
+
+        // Ensure exit fee is present
+        assertEq(stakedMonad.getExitFeeBips(), 5, "Exit fee should be 0.05%");
+
+        // Set weight to 100
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Alice deposits 10 MON
+        vm.startPrank(ALICE);
+        stakedMonad.deposit{value: 10 ether}(0, ALICE);
+
+        uint96 sharesToUnlock = 10 ether;
+        uint96 expectedSharesForProtocol = sharesToUnlock * 5 / BIPS;
+        uint96 expectedValueToAlice = stakedMonad.convertToAssets(sharesToUnlock - expectedSharesForProtocol);
+
+        // Alice successfully unlocks her shares instantly
+        vm.startPrank(ALICE);
+        uint96 returnedResult = stakedMonad.instantUnlock(sharesToUnlock, 0, ALICE);
+        assertEq(returnedResult, expectedValueToAlice);
+
+        // Claim protocol shares created from Alice's instant unlock
+        vm.startPrank(ADMIN);
+        assertEq(stakedMonad.getMintableProtocolShares(), 0, "There should be no mintable shares");
+        assertEq(stakedMonad.balanceOf(ADMIN), 0, "Admin should have 0 shares");
+        stakedMonad.claimProtocolFees(ADMIN);
+        assertEq(stakedMonad.balanceOf(ADMIN), expectedSharesForProtocol);
+
+        // No more shares should be claimable
+        uint256 adminSharesBalance = stakedMonad.balanceOf(ADMIN);
+        stakedMonad.claimProtocolFees(ADMIN);
+        assertEq(stakedMonad.balanceOf(ADMIN), adminSharesBalance);
+    }
+
     function test_mintProtocolShares_must_have_role() public {
         // Add 1 node
         vm.startPrank(ADMIN);
@@ -490,11 +533,11 @@ contract StakedMonadTest is Test, StakerFaker {
         bytes32 role = stakedMonad.ROLE_FEE_CLAIMER();
         assertFalse(stakedMonad.hasRole(role, BOB), "Bob should not have role");
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
-        stakedMonad.mintProtocolShares(BOB);
+        stakedMonad.claimProtocolFees(BOB);
 
         vm.startPrank(ADMIN);
         assertTrue(stakedMonad.hasRole(role, ADMIN), "Admin should have role");
-        stakedMonad.mintProtocolShares(BOB);
+        stakedMonad.claimProtocolFees(BOB);
     }
 
     function test_setExitFee_must_not_be_excessive() public {

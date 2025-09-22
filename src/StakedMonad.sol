@@ -640,7 +640,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
      * @notice Mints management fees if present
      * @notice Transfers exit fees if present
      */
-    function mintProtocolShares(address to) external whenNotPaused onlyRole(ROLE_FEE_CLAIMER) {
+    function claimProtocolFees(address to) external whenNotPaused onlyRole(ROLE_FEE_CLAIMER) {
         _updateFees();
 
         uint256 managementFeeShares = managementFee.virtualSharesSnapshot;
