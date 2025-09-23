@@ -39,4 +39,8 @@ abstract contract StakerFaker is Test {
             abi.encode(isSuccess)
         );
     }
+
+    function clearMocks() internal {
+        vm.clearMockedCalls();
+    }
 }

@@ -66,7 +66,7 @@ contract StakedMonadTest is Test, StakerFaker {
         stakedMonad.deposit{value: depositAmount}(expectedShares + 1, ALICE);
     }
 
-    function test_deposit_1Nodes(uint96 depositAmount) public {
+    function test_deposit_1_nodes(uint96 depositAmount) public {
         vm.assume(depositAmount >= MINIMUM_DEPOSIT);
         vm.assume(depositAmount < FUNDING_AMOUNT);
 
@@ -102,7 +102,7 @@ contract StakedMonadTest is Test, StakerFaker {
         assertEq(stakedMonad.totalShares(), sharesAlice + protocolShares);
     }
 
-    function test_deposit_2Nodes(uint96 depositAmount) public {
+    function test_deposit_2_nodes(uint96 depositAmount) public {
         vm.assume(depositAmount >= MINIMUM_DEPOSIT);
         vm.assume(depositAmount < FUNDING_AMOUNT);
 
@@ -318,7 +318,7 @@ contract StakedMonadTest is Test, StakerFaker {
         stakedMonad.addNode(nodeId);
 
         // Ensure exit fee exists
-        assertGt(stakedMonad.getExitFeeBips(), 0);
+        assertTrue(stakedMonad.getExitFeeBips() > 0, "Default exit fee is expected");
 
         // Increase weight to 10,000
         Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
@@ -356,6 +356,46 @@ contract StakedMonadTest is Test, StakerFaker {
         vm.startPrank(ALICE);
 
         // Successfully cancel unlock request
+        stakedMonad.cancelUnlockRequest(0);
+
+        assertEq(stakedMonad.balanceOf(address(stakedMonad)), 0, "No shares should still be in escrow");
+        assertEq(stakedMonad.balanceOf(ALICE), shares, "Alice should be holding all her shares again");
+    }
+
+    function test_cancel_unlock_with_exit_fee_that_changed_after_request(uint96 depositAmount, uint16 newExitFee) public {
+        vm.assume(depositAmount >= MINIMUM_DEPOSIT);
+        vm.assume(depositAmount < FUNDING_AMOUNT);
+        vm.assume(newExitFee > 0);
+        vm.assume(newExitFee <= 50);
+
+        // Add 1 node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Ensure exit fee exists and validate new exit fee to apply later
+        uint16 defaultExitFee = stakedMonad.getExitFeeBips();
+        assertTrue(defaultExitFee > 0, "Default exit fee is expected");
+        vm.assume(newExitFee != defaultExitFee);
+
+        // Increase weight to 10,000
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 10_000, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Alice deposits
+        vm.startPrank(ALICE);
+        uint96 shares = stakedMonad.deposit{value: depositAmount}(0, ALICE);
+
+        // Alice makes an unlock request with all of her shares
+        stakedMonad.requestUnlock(shares, 0);
+
+        // Exit fee is changed
+        vm.startPrank(ADMIN);
+        stakedMonad.setExitFee(newExitFee);
+
+        // Alice successfully cancels unlock request
+        vm.startPrank(ALICE);
         stakedMonad.cancelUnlockRequest(0);
 
         assertEq(stakedMonad.balanceOf(address(stakedMonad)), 0, "No shares should still be in escrow");
@@ -419,6 +459,9 @@ contract StakedMonadTest is Test, StakerFaker {
         // No more shares can be instantly unlocked
         assertEq(stakedMonad.getInstantUnlockableShares(), 0);
 
+        // All shares are burned
+        assertEq(stakedMonad.balanceOf(address(stakedMonad)), 0);
+
         // Alice tries to unlock more shares (1 wei) instantly
         vm.expectRevert(CustomErrors.InstantUnlockThreshold.selector);
         stakedMonad.instantUnlock(1, 0, ALICE);
@@ -468,9 +511,12 @@ contract StakedMonadTest is Test, StakerFaker {
         uint96 returnedResult = stakedMonad.instantUnlock(sharesToUnlock, expectedValueWithExitFee, ALICE);
         uint256 balanceIncrease = ALICE.balance - balanceSnapshot;
 
-        assertGt(balanceIncrease, 0);
+        assertTrue(balanceIncrease > 0);
         assertEq(balanceIncrease, expectedValueWithExitFee);
         assertEq(balanceIncrease, returnedResult);
+
+        // Shares unlocked by Alice are burned but protocol fee shares are not
+        assertEq(stakedMonad.balanceOf(address(stakedMonad)), sharesToUnlock * 5 / BIPS);
     }
 
     function test_instant_unlock_creates_protocol_fees() public {
@@ -503,6 +549,9 @@ contract StakedMonadTest is Test, StakerFaker {
         uint96 returnedResult = stakedMonad.instantUnlock(sharesToUnlock, 0, ALICE);
         assertEq(returnedResult, expectedValueToAlice);
 
+        // Instantly redeemed shares are burnt, but protocol fee shares are held in the contract
+        assertEq(stakedMonad.balanceOf(address(stakedMonad)), expectedSharesForProtocol);
+
         // Claim protocol shares created from Alice's instant unlock
         vm.startPrank(ADMIN);
         assertEq(stakedMonad.getMintableProtocolShares(), 0, "There should be no mintable shares");
@@ -516,40 +565,111 @@ contract StakedMonadTest is Test, StakerFaker {
         assertEq(stakedMonad.balanceOf(ADMIN), adminSharesBalance);
     }
 
-    function test_mintProtocolShares_must_have_role() public {
-        // Add 1 node
-        vm.startPrank(ADMIN);
-        uint64 nodeId = 1;
-        stakedMonad.addNode(nodeId);
-
-        // Set weight and generate rewards
-        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
-        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
-        stakedMonad.updateWeights(weightDeltas);
-        stakedMonad.deposit{value: 1 ether}(0, ADMIN);
-        vm.warp(vm.getBlockTimestamp() + 1 days);
-
-        vm.startPrank(BOB);
+    function test_claimProtocolFees_must_have_role() public {
         bytes32 role = stakedMonad.ROLE_FEE_CLAIMER();
+
+        // Bob (without fee claimer role) cannot call
+        vm.startPrank(BOB);
         assertFalse(stakedMonad.hasRole(role, BOB), "Bob should not have role");
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
         stakedMonad.claimProtocolFees(BOB);
 
+        // Admin (with fee claimer role) can call
         vm.startPrank(ADMIN);
         assertTrue(stakedMonad.hasRole(role, ADMIN), "Admin should have role");
         stakedMonad.claimProtocolFees(BOB);
     }
 
-    function test_setExitFee_must_not_be_excessive() public {
+    function test_claimProtocolFees_with_management_fee() public {
+        assertEq(stakedMonad.getManagementFeeBips(), 2_00, "Management fee should be 2.00%");
+
+        // Add 1 node
         vm.startPrank(ADMIN);
-        vm.expectRevert(CustomErrors.FeeTooLarge.selector);
-        stakedMonad.setExitFee(50 + 1);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Generate fees on 100 MON over 365 days
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+        stakedMonad.deposit{value: 100 ether}(0, ADMIN);
+        vm.warp(vm.getBlockTimestamp() + 365 days);
+
+        // Claim protocol fees triggering a mint
+        uint256 sharesBeforeClaim = stakedMonad.balanceOf(BOB);
+        stakedMonad.claimProtocolFees(BOB);
+        uint256 sharesClaimed = stakedMonad.balanceOf(BOB) - sharesBeforeClaim;
+
+        assertEq(sharesClaimed, 2e18, "Should earn a 2% annual fee on 100 MON after 365 days");
     }
 
-    function test_setManagementFee_must_not_be_excessive() public {
+    function test_claimProtocolFees_with_management_fee_and_exit_fee() public {
+        assertEq(stakedMonad.getManagementFeeBips(), 2_00, "Management fee should be 2.00%");
+        assertEq(stakedMonad.getExitFeeBips(), 5, "Exit fee should be 0.05%");
+
+        // Add 1 node
         vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Generate management fees on 100 MON over 365 days
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+        stakedMonad.deposit{value: 100 ether}(0, ADMIN);
+        vm.warp(vm.getBlockTimestamp() + 365 days);
+        uint96 managementFeeShares = 100e18 * 2_00 / BIPS;
+
+        // Generate exit fees by instantly unlocking 10 shares
+        stakedMonad.instantUnlock(10e18, 0, ADMIN);
+        uint96 exitFeeShares = 10e18 * 5 / BIPS;
+
+        // Claim protocol fees triggering a mint
+        uint256 sharesBeforeClaim = stakedMonad.balanceOf(BOB);
+        stakedMonad.claimProtocolFees(BOB);
+        uint256 sharesClaimed = stakedMonad.balanceOf(BOB) - sharesBeforeClaim;
+
+        assertEq(sharesClaimed, managementFeeShares + exitFeeShares, "Should claim both management fees and exit fees");
+    }
+
+    function test_setExitFee(uint16 newFee) public {
+        uint16 maxFee = 50;
+        uint16 defaultFee = stakedMonad.getExitFeeBips();
+
+        vm.assume(newFee != defaultFee);
+        vm.assume(newFee <= maxFee);
+
+        vm.startPrank(ADMIN);
+        stakedMonad.setExitFee(newFee);
+        assertEq(stakedMonad.getExitFeeBips(), newFee);
+
+        // Fee cannot be set to the same value
+        vm.expectRevert(CustomErrors.NoChange.selector);
+        stakedMonad.setExitFee(newFee);
+
+        // Fee cannot be excessive
         vm.expectRevert(CustomErrors.FeeTooLarge.selector);
-        stakedMonad.setManagementFee(20_00 + 1);
+        stakedMonad.setExitFee(maxFee + 1);
+    }
+
+    function test_setManagementFee(uint16 newFee) public {
+        uint16 maxFee = 2_00;
+        uint16 defaultFee = stakedMonad.getManagementFeeBips();
+
+        vm.assume(newFee != defaultFee);
+        vm.assume(newFee <= maxFee);
+
+        vm.startPrank(ADMIN);
+        stakedMonad.setManagementFee(newFee);
+        assertEq(stakedMonad.getManagementFeeBips(), newFee);
+
+        // Fee cannot be set to the same value
+        vm.expectRevert(CustomErrors.NoChange.selector);
+        stakedMonad.setManagementFee(newFee);
+
+        // Fee cannot be excessive
+        vm.expectRevert(CustomErrors.FeeTooLarge.selector);
+        stakedMonad.setManagementFee(maxFee + 1);
     }
 
     function test_pause_and_unpause_management() public {
@@ -572,7 +692,225 @@ contract StakedMonadTest is Test, StakerFaker {
         assertTrue(stakedMonad.paused());
     }
 
-    function test_weightImbalance_under_allocation_2Nodes(uint96 depositAmount) public {
+    function test_bonding_with_underallocation() public {
+        uint96 depositAmount = 10 ether;
+
+        // Add 2 nodes
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        uint64 nodeId2 = 2;
+        stakedMonad.addNode(nodeId1);
+        stakedMonad.addNode(nodeId2);
+
+        // Set weights to 60% / 40%
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](2);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 600e18, isIncreasing: true});
+        weightDeltas[1] = Registry.WeightDelta({nodeId: nodeId2, delta: 400e18, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Deposit
+        stakedMonad.deposit{value: depositAmount}(0, ADMIN);
+
+        // Submit batch (#1) to process deposit
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        StakerFaker.mockDelegate(nodeId2, true);
+        stakedMonad.submitBatch();
+
+        Registry.Node memory node1 = stakedMonad.viewNodeByNodeId(nodeId1);
+        assertEq(node1.staked, 6 ether);
+
+        Registry.Node memory node2 = stakedMonad.viewNodeByNodeId(nodeId2);
+        assertEq(node2.staked, 4 ether);
+    }
+
+    function test_bonding_with_overallocation_and_underallocation() public {
+        // Add 2 nodes
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        uint64 nodeId2 = 2;
+        stakedMonad.addNode(nodeId1);
+        stakedMonad.addNode(nodeId2);
+
+        // Set weights to 60% / 40%
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](2);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 600e18, isIncreasing: true});
+        weightDeltas[1] = Registry.WeightDelta({nodeId: nodeId2, delta: 400e18, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Deposit 10 MON
+        stakedMonad.deposit{value: 10 ether}(0, ADMIN);
+
+        // Submit batch (#1) to process deposit
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        StakerFaker.mockDelegate(nodeId2, true);
+        stakedMonad.submitBatch();
+
+        // Set weights to 50% / 50%
+        // Creates over allocation to node 1
+        // Creates under allocation to node 2
+        weightDeltas = new Registry.WeightDelta[](2);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 100e18, isIncreasing: false});
+        weightDeltas[1] = Registry.WeightDelta({nodeId: nodeId2, delta: 100e18, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Deposit an additional 1 MON (total 11 MON)
+        stakedMonad.deposit{value: 1 ether}(0, ADMIN);
+
+        // Submit batch (#2) to process deposit
+        StakerFaker.mockGetEpoch(2, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        StakerFaker.mockDelegate(nodeId2, true);
+        stakedMonad.submitBatch();
+
+        // Only node 2 which was under allocated should receive additional stake
+        assertEq(stakedMonad.viewNodeByNodeId(nodeId1).staked, 6 ether + 0 ether, "Node 1 should have received no stake");
+        assertEq(stakedMonad.viewNodeByNodeId(nodeId2).staked, 4 ether + 1 ether, "Node 2 should have received 1 MON");
+
+        // Deposit an additional 9 MON (total 20 MON)
+        stakedMonad.deposit{value: 9 ether}(0, ADMIN);
+
+        // Submit batch (#3) to process deposit
+        StakerFaker.mockGetEpoch(3, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        StakerFaker.mockDelegate(nodeId2, true);
+        stakedMonad.submitBatch();
+
+        // Both nodes should receive some additional stake
+        assertEq(stakedMonad.viewNodeByNodeId(nodeId1).staked, 6 ether + 4 ether, "Node 1 should have received 4 MON");
+        assertEq(stakedMonad.viewNodeByNodeId(nodeId2).staked, 5 ether + 5 ether, "Node 2 should have received 5 MON");
+    }
+
+    function test_bonding_with_dust() public {
+        // Add 2 nodes
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        uint64 nodeId2 = 2;
+        stakedMonad.addNode(nodeId1);
+        stakedMonad.addNode(nodeId2);
+
+        // Set weights to 50% / 50%
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](2);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 500e18, isIncreasing: true});
+        weightDeltas[1] = Registry.WeightDelta({nodeId: nodeId2, delta: 500e18, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Deposit
+        uint96 depositAmount = 10 ether + 1 wei;
+        stakedMonad.deposit{value: depositAmount}(0, ADMIN);
+
+        // Submit batch (#1) to process deposit
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        StakerFaker.mockDelegate(nodeId2, true);
+        stakedMonad.submitBatch();
+
+        // Most of the funds are allocated to nodes
+        assertEq(stakedMonad.viewNodeByNodeId(nodeId1).staked, 5 ether);
+        assertEq(stakedMonad.viewNodeByNodeId(nodeId2).staked, 5 ether);
+
+        // Current batch (#2) should contain the unallocated dust
+        (uint96 assets,) = stakedMonad.batchDepositRequests(2);
+        assertEq(assets, 1 wei, "Dust should be allocated into the next batch");
+    }
+
+    function test_unbonding_with_overallocation_and_underallocation() public {
+        // Add 2 nodes
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        uint64 nodeId2 = 2;
+        stakedMonad.addNode(nodeId1);
+        stakedMonad.addNode(nodeId2);
+
+        // Disable exit fee
+        stakedMonad.setExitFee(0);
+
+        // Set weights to 60% / 40%
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](2);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 600e18, isIncreasing: true});
+        weightDeltas[1] = Registry.WeightDelta({nodeId: nodeId2, delta: 400e18, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Deposit 10 MON
+        stakedMonad.deposit{value: 10 ether}(0, ADMIN);
+
+        // Submit batch (#1) to process deposit
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        StakerFaker.mockDelegate(nodeId2, true);
+        stakedMonad.submitBatch();
+
+        // Set weights to 50% / 50%
+        // Creates over allocation to node 1
+        // Creates under allocation to node 2
+        weightDeltas = new Registry.WeightDelta[](2);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 100e18, isIncreasing: false});
+        weightDeltas[1] = Registry.WeightDelta({nodeId: nodeId2, delta: 100e18, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Request to unbond 0.5 MON worth of shares (1:1 redemption ratio still)
+        uint96 expectedUndelegationFromNode1 = stakedMonad.requestUnlock(0.5 ether, 0);
+
+        // Submit batch (#2) to process unbond
+        StakerFaker.clearMocks();
+        StakerFaker.mockGetEpoch(2, false);
+        StakerFaker.mockUndelegate(nodeId1, expectedUndelegationFromNode1, 0, true);
+        stakedMonad.submitBatch();
+
+        // Only node 1 which was over allocated should have been unbonded from
+        assertEq(stakedMonad.viewNodeByNodeId(nodeId1).staked, 6 ether - 0.5 ether, "Node 1 should have lost 0.5 MON");
+        assertEq(stakedMonad.viewNodeByNodeId(nodeId2).staked, 4 ether - 0 ether, "Node 2 should have lost no stake");
+    }
+
+    function test_unbonding_with_dust() public {
+        // Add 2 nodes
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        uint64 nodeId2 = 2;
+        stakedMonad.addNode(nodeId1);
+        stakedMonad.addNode(nodeId2);
+
+        // Disable exit fee
+        stakedMonad.setExitFee(0);
+
+        // Set weights to 50% / 50%
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](2);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 500e18, isIncreasing: true});
+        weightDeltas[1] = Registry.WeightDelta({nodeId: nodeId2, delta: 500e18, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Deposit 10 MON
+        stakedMonad.deposit{value: 10 ether}(0, ADMIN);
+
+        // Submit batch (#1) to process deposit
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        StakerFaker.mockDelegate(nodeId2, true);
+        stakedMonad.submitBatch();
+
+        // Request unlock of shares that will create dust
+        uint96 unbondShares = 4 ether + 1 wei;
+        uint96 unlockSpotValue = stakedMonad.requestUnlock(unbondShares, 0);
+        assertEq(unlockSpotValue, 4 ether + 1 wei, "1:1 redemption ratio should be in effect");
+
+        // Submit batch (#2) to process unbond
+        StakerFaker.clearMocks();
+        StakerFaker.mockGetEpoch(2, false);
+        StakerFaker.mockUndelegate(nodeId1, unlockSpotValue / 2, 0, true);
+        StakerFaker.mockUndelegate(nodeId2, unlockSpotValue / 2, 0, true);
+        stakedMonad.submitBatch();
+
+        // Most of the funds are unbonded from nodes
+        assertEq(stakedMonad.viewNodeByNodeId(nodeId1).staked, 5 ether - 2 ether);
+        assertEq(stakedMonad.viewNodeByNodeId(nodeId2).staked, 5 ether - 2 ether);
+
+        // Current batch (#3) should contain the unallocated dust
+        (uint96 assets,) = stakedMonad.batchWithdrawRequests(3);
+        assertEq(assets, 1 wei, "Dust should be allocated into the next batch");
+    }
+
+    function test_weightImbalance_under_allocation(uint96 depositAmount) public {
         vm.assume(depositAmount >= MINIMUM_DEPOSIT);
         vm.assume(depositAmount < FUNDING_AMOUNT);
 
@@ -595,7 +933,7 @@ contract StakedMonadTest is Test, StakerFaker {
         assertEq(underAllocations[1], depositAmount * 40 / 100, "Node #2 should have 40% of the under allocation");
     }
 
-    function test_weightImbalance_over_allocation_2Nodes(uint96 depositAmount) public {
+    function test_weightImbalance_over_allocation(uint96 depositAmount) public {
         vm.assume(depositAmount >= MINIMUM_DEPOSIT);
         vm.assume(depositAmount < FUNDING_AMOUNT);
 
