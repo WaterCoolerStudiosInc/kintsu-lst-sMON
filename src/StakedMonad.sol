@@ -321,7 +321,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
      * @notice Unlock is batched into current batch request
      * @notice Applies exit fee if present
      */
-    function requestUnlock(uint96 shares, uint96 minSpotValue) external whenNotPaused {
+    function requestUnlock(uint96 shares, uint96 minSpotValue) external whenNotPaused returns (uint96 spotValue) {
         _updateFees();
 
         // Calculate exit toll (if any)
@@ -333,7 +333,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
         }
 
         uint96 sharesToUnlock = shares - sharesToFee;
-        uint96 spotValue = convertToAssets(sharesToUnlock);
+        spotValue = convertToAssets(sharesToUnlock);
         if (spotValue == 0) revert NoChange();
         if (spotValue < minSpotValue) revert MinimumUnlock();
 
