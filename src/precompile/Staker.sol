@@ -29,8 +29,6 @@ interface IPrecompile {
 
     /// @dev Gas cost ~16200
     function getEpoch() external view returns (uint64 epoch, bool in_epoch_delay_period);
-
-    function WITHDRAWAL_DELAY() external view returns (uint8);
 }
 
 abstract contract Staker {
@@ -74,17 +72,10 @@ abstract contract Staker {
      * @dev TODO: Robustly provide from a reliable source or as a constant
      */
     function getWithdrawDelay() internal view returns (uint8) {
-        // return IPrecompile(PRECOMPILE).WITHDRAWAL_DELAY();
-
         // Monad Mainnet
         if (block.chainid == 143) return 7;
-        // Monad Testnet Public
-        if (block.chainid == 10143) return 1;
-        // Monad Testnet-2
-        if (block.chainid == 30143) return 1;
         // Local network
         if (block.chainid == 31337) return 7;
-
         return 1;
     }
 
