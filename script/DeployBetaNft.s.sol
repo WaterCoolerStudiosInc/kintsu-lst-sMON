@@ -11,7 +11,7 @@ import {KintsuBetaERC1155} from "../src/token-gate/KintsuBetaERC1155.sol";
  * @dev These environment variables must be set:
  *     - PRIVATE_KEY - Private key of the deploying account
  */
-contract DeployCore is Script {
+contract DeployBetaNft is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
