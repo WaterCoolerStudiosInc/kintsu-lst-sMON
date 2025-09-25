@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.26;
+pragma solidity ^0.8.0;
 
-import {Script, console} from "forge-std/src/Script.sol";
-import {KintsuBetaERC1155} from "../src/token-gate/KintsuBetaERC1155.sol";
+import "forge-std/src/Script.sol";
+import "../src/token-gate/KintsuBetaERC1155.sol";
 
 /**
- * Deploys the beta NFT:
- *     - KintsuBetaERC1155
- *
+ * @notice Deploys the beta NFT KintsuBetaERC1155
  * @dev These environment variables must be set:
- *     - PRIVATE_KEY - Private key of the deploying account
+ *      - PRIVATE_KEY - Private key of the deploying account
  */
 contract DeployBetaNft is Script {
     function run() external {
@@ -29,6 +27,7 @@ contract DeployBetaNft is Script {
     }
 
     function writeDeploymentAddress(string memory contractName, address deployment) internal {
+        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) return;
         string memory path = string(abi.encodePacked("./out/", contractName, ".sol/", vm.toString(block.chainid), "_", "deployment.json"));
         string memory json = vm.serializeAddress("deployment.json", "address", deployment);
         vm.writeJson(json, path);

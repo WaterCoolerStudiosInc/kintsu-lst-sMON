@@ -6,28 +6,28 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/StakedMonad.sol";
 
 /**
- * @notice Deploys the core contracts:
- *         - StakedMonad
- *         - ERC1967Proxy (StakedMonad Proxy)
- * @dev Currently broken on Monad-tn2. Workaround is to use `DeployImpl.s.sol` and `DeployProxy.s.sol`
+ * @notice Deploys and configures an ERC1967Proxy for StakedMonad
+ * @dev StakedMonad implementation must have already been deployed
+ * @dev Gas estimation is currently drastically underestimated for Monad-tn2 so we must override this (5x)
  * @dev These environment variables must be set:
  *      - PRIVATE_KEY - Private key of the deploying account
+ * @custom:example forge script DeployCoreProxy --sig "run(address)" $STAKED_MONAD_IMPL --gas-estimate-multiplier 500
  */
-contract DeployCore is Script {
-    function run() external {
+contract DeployCoreProxy is Script {
+    function run(address stakedMonadImpl) external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         console.log("Deployer: %s", deployer);
 
-        vm.startBroadcast(deployerPrivateKey);
+        // Utilize already deployed implementation
+        require(stakedMonadImpl.code.length > 0, "Invalid StakedMonad implementation");
+        console.log("StakedMonad implementation already deployed at: %s", address(stakedMonadImpl));
 
-        // Deploy implementation
-        StakedMonad stakedMonadImpl = new StakedMonad();
-        console.log("StakedMonad implementation deployed to: %s", address(stakedMonadImpl));
+        vm.startBroadcast(deployerPrivateKey);
 
         // Deploy and initialize proxy
         ERC1967Proxy stakedMonadProxy = new ERC1967Proxy(
-            address(stakedMonadImpl),
+            stakedMonadImpl,
             abi.encodeCall(StakedMonad.initialize, (deployer))
         );
         console.log("ERC1967Proxy (StakedMonad) deployed to: %s", address(stakedMonadProxy));

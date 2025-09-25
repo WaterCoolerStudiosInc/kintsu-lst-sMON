@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.26;
+pragma solidity ^0.8.0;
 
-import {Script, console} from "forge-std/src/Script.sol";
-import {StakedMonad} from "../src/StakedMonad.sol";
+import "forge-std/src/Script.sol";
+import "../src/StakedMonad.sol";
 
 /**
  * @notice Transfers all initial roles from StakedMonad to a new address
