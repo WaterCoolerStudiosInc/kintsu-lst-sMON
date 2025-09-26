@@ -30,5 +30,6 @@ forge test
 - Change `.env` file if desired, currently configured with default anvil wallet
 - Deploy in separate terminal window with:
   ```shell
-  forge script DeployCore --rpc-url anvil --broadcast
+  forge script DeployCoreImpl --rpc-url anvil --broadcast
+  forge script DeployCoreProxy --sig "run(address)" <IMPL_ADDRESS> --rpc-url anvil --broadcast
   ```

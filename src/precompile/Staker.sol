@@ -17,7 +17,7 @@ interface IPrecompile {
     function getDelegator(
         uint64 val_id,
         address delegator
-    ) external view returns (
+    ) external returns (
         uint256 stake,
         uint256 acc_reward_per_token,
         uint256 rewards,
@@ -28,7 +28,7 @@ interface IPrecompile {
     );
 
     /// @dev Gas cost ~16200
-    function getEpoch() external view returns (uint64 epoch, bool in_epoch_delay_period);
+    function getEpoch() external returns (uint64 epoch, bool in_epoch_delay_period);
 }
 
 abstract contract Staker {
@@ -63,7 +63,7 @@ abstract contract Staker {
      * @return epoch - Current epoch number
      * @return in_epoch_delay_period - True when past the boundary block, and False otherwise
      */
-    function getEpoch() internal view returns (uint64 epoch, bool in_epoch_delay_period) {
+    function getEpoch() internal returns (uint64 epoch, bool in_epoch_delay_period) {
         return IPrecompile(PRECOMPILE).getEpoch();
     }
 
@@ -198,7 +198,7 @@ abstract contract Staker {
     /**
      * @notice Provides a view of the delegator’s stake across execution, consensus, and snapshot contexts
      */
-    function getDelegator(uint64 val_id, address delegator) public view returns (
+    function getDelegator(uint64 val_id, address delegator) public returns (
         uint256 stake,
         uint256 acc_reward_per_token,
         uint256 rewards,

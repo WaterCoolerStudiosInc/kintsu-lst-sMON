@@ -113,6 +113,10 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
     // Allow receiving funds via sweep()
     receive() external payable {}
 
+    constructor() {
+        Initializable._disableInitializers();
+    }
+
     function initialize(address admin) external payable initializer {
         UUPSUpgradeable.__UUPSUpgradeable_init();
         ERC20Upgradeable.__ERC20_init("Kintsu Staked Monad", "sMON");
@@ -689,7 +693,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
         PausableUpgradeable._unpause();
     }
 
-    function _getActivityEpoch() private view returns (uint64 currentEpoch, uint64 activityEpoch) {
+    function _getActivityEpoch() private returns (uint64 currentEpoch, uint64 activityEpoch) {
         (uint64 _currentEpoch, bool in_epoch_delay_period) = Staker.getEpoch();
         currentEpoch = _currentEpoch;
         activityEpoch = in_epoch_delay_period ? currentEpoch + 2 : currentEpoch + 1;

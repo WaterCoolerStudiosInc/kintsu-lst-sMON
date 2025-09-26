@@ -6,8 +6,8 @@ import "../src/StakedMonad.sol";
 
 /**
  * @notice Transfers all initial roles from StakedMonad to a new address
- * @dev Sender must be the same address assigned these roles from `StakedMonad::initialize()`
- * @custom:example forge script TransferRoles --sig "run(address)" $NEW_ADMIN --rpc-url monad_testnet
+ * @dev Sender must be the same address assigned these roles from `StakedMonad::initialize(admin)`
+ * @custom:example forge script TransferRoles --sig "run(address)" $NEW_ADMIN
  */
 contract TransferRoles is Script {
     function run(address newAdmin) external {

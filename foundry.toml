@@ -5,13 +5,16 @@ libs = ["lib", "dependencies"]
 solc_version = "0.8.26"
 optimizer = true
 optimizer_runs = 2000
-fs_permissions = [{ access = "read-write", path = "./out"}]
+fs_permissions = [{ access = "read-write", path = "./out" }]
 
 [profile.local]
 eth_rpc_url = "http://localhost:8545"
 
 [profile.testnet]
 eth_rpc_url = "https://testnet-rpc.monad.xyz"
+
+[profile.tn2]
+eth_rpc_url = "https://rpc-testnet-2.monadinfra.com"
 
 [dependencies]
 "forge-std" = "1.9.6"
@@ -21,3 +24,4 @@ eth_rpc_url = "https://testnet-rpc.monad.xyz"
 [rpc_endpoints]
 anvil = "http://localhost:8545"
 monad_testnet = "https://testnet-rpc.monad.xyz"
+monad_testnet2 = "https://rpc-testnet-2.monadinfra.com"
