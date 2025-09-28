@@ -57,6 +57,16 @@ contract StakedMonadTest is Test, StakerFaker {
         }
     }
 
+    function test_deposit_amount_must_be_reasonable() public {
+        uint256 maxDeposit = uint256(type(uint96).max);
+        vm.deal(ADMIN, maxDeposit + 1 wei);
+        vm.startPrank(ADMIN);
+
+        // Deposit more than uint96
+        vm.expectRevert(CustomErrors.DepositOverflow.selector);
+        stakedMonad.deposit{value: maxDeposit + 1 wei}(0, ADMIN);
+    }
+
     function test_deposit_reverts_when_minimum_shares_is_not_minted(uint96 depositAmount) public {
         vm.assume(depositAmount > 0);
         vm.assume(depositAmount < MINIMUM_DEPOSIT);
@@ -1031,6 +1041,54 @@ contract StakedMonadTest is Test, StakerFaker {
         StakerFaker.mockWithdraw(nodeId1, 255, true);
         stakedMonad.sweepForced(nodeIds);
         assertFalse(stakedMonad.isForceWithdrawPending(nodeId1));
+    }
+
+    function test_compound_reverts_when_no_rewards() public {
+        // Add node
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        stakedMonad.addNode(nodeId1);
+
+        uint64[] memory nodeIds = new uint64[](1);
+        nodeIds[0] = nodeId1;
+
+        // Mock claim succeeding but transferring no rewards
+        StakerFaker.mockClaimRewards(nodeId1, true);
+
+        vm.expectRevert(CustomErrors.NoChange.selector);
+        stakedMonad.compound(nodeIds);
+    }
+
+    function test_contributeToPool_amount_must_be_reasonable() public {
+        uint256 maxContribution = uint256(type(uint96).max);
+        vm.deal(ADMIN, maxContribution + 1 wei);
+        vm.startPrank(ADMIN);
+
+        // Contribute more than uint96
+        vm.expectRevert(CustomErrors.DepositOverflow.selector);
+        stakedMonad.contributeToPool{value: maxContribution + 1 wei}(ADMIN);
+    }
+
+    function test_contributeToPool_is_prevented_at_low_tvl() public {
+        vm.startPrank(ADMIN);
+
+        // Deposit slightly less than threshold
+        stakedMonad.deposit{value: stakedMonad.MINIMUM_CONTRIBUTE_THRESHOLD() - 1 wei}(0, ADMIN);
+
+        vm.expectRevert(CustomErrors.MinimumContributeThreshold.selector);
+        stakedMonad.contributeToPool{value: 1 ether}(ADMIN);
+    }
+
+    function test_contributeToPool_increases_share_value() public {
+        vm.startPrank(ADMIN);
+
+        // Deposit enough to satisfy the threshold
+        uint256 depositAmount = stakedMonad.MINIMUM_CONTRIBUTE_THRESHOLD();
+        stakedMonad.deposit{value: depositAmount}(0, ADMIN);
+
+        uint256 shareValueSnapshot = stakedMonad.convertToAssets(1e18);
+        stakedMonad.contributeToPool{value: 1 ether}(ADMIN);
+        assertGt(stakedMonad.convertToAssets(1e18), shareValueSnapshot);
     }
 
     function test_weightImbalance_under_allocation(uint96 depositAmount) public {

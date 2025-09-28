@@ -40,6 +40,15 @@ abstract contract StakerFaker is Test {
         );
     }
 
+    // TODO: Manage dealing rewards
+    function mockClaimRewards(uint64 val_id, bool isSuccess) internal {
+        vm.mockCall(
+            PRECOMPILE,
+            abi.encodeWithSelector(IPrecompile.claimRewards.selector, val_id),
+            abi.encode(isSuccess)
+        );
+    }
+
     function clearMocks() internal {
         vm.clearMockedCalls();
     }
