@@ -910,6 +910,129 @@ contract StakedMonadTest is Test, StakerFaker {
         assertEq(assets, 1 wei, "Dust should be allocated into the next batch");
     }
 
+    function test_unbond_disabled_node_cannot_be_active() public {
+        // Add node
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        stakedMonad.addNode(nodeId1);
+
+        // Try to unbond node 1 (still active)
+        vm.expectRevert(CustomErrors.ActiveNode.selector);
+        stakedMonad.unbondDisableNode(nodeId1);
+    }
+
+    function test_unbond_disabled_node_must_have_active_stake() public {
+        // Add node
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        stakedMonad.addNode(nodeId1);
+
+        // Disable node
+        stakedMonad.disableNode(nodeId1);
+
+        // Try to unbond node (disabled) (no active stake)
+        vm.expectRevert(CustomErrors.NoChange.selector);
+        stakedMonad.unbondDisableNode(nodeId1);
+    }
+
+    function test_sweep_withdraws_continuous_ids() public {
+        // Add node
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        stakedMonad.addNode(nodeId1);
+
+        // Prep vault: set weight, deposit, submit ingress batch
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 100e18, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+        stakedMonad.deposit{value: 100 ether}(0, ADMIN);
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        stakedMonad.submitBatch();
+
+        // Submit batch (#2) utilizing withdraw id of 0
+        uint96 spotValue = stakedMonad.requestUnlock(1e18, 0);
+        StakerFaker.mockGetEpoch(2, false);
+        StakerFaker.mockUndelegate(nodeId1, spotValue, 0, true);
+        stakedMonad.submitBatch();
+        assertEq(stakedMonad.getWithdrawIds(nodeId1).length, 1);
+        assertEq(stakedMonad.getWithdrawIds(nodeId1)[0], 0);
+
+        // Submit batch (#3) utilizing withdraw id of 1
+        spotValue = stakedMonad.requestUnlock(1e18, 0);
+        StakerFaker.mockGetEpoch(3, false);
+        StakerFaker.mockUndelegate(nodeId1, spotValue, 1, true);
+        stakedMonad.submitBatch();
+        assertEq(stakedMonad.getWithdrawIds(nodeId1).length, 2);
+        assertEq(stakedMonad.getWithdrawIds(nodeId1)[1], 1);
+
+        // Submit batch (#4) utilizing withdraw id of 2
+        spotValue = stakedMonad.requestUnlock(1e18, 0);
+        StakerFaker.mockGetEpoch(4, false);
+        StakerFaker.mockUndelegate(nodeId1, spotValue, 2, true);
+        stakedMonad.submitBatch();
+        assertEq(stakedMonad.getWithdrawIds(nodeId1).length, 3);
+        assertEq(stakedMonad.getWithdrawIds(nodeId1)[2], 2);
+
+        // Warp forward to simulate unlocks becoming withdrawable
+        StakerFaker.mockGetEpoch(100, false);
+
+        uint64[] memory nodeIds = new uint64[](1);
+        nodeIds[0] = nodeId1;
+
+        // Sweep with limit less than available
+        uint8 maxWithdrawals = 1;
+        assertLt(maxWithdrawals, stakedMonad.getWithdrawIdsSize(nodeId1));
+        StakerFaker.mockWithdraw(nodeId1, 0, true); // withdraw id 0
+        stakedMonad.sweep(nodeIds, maxWithdrawals);
+        assertEq(stakedMonad.getWithdrawIdsSize(nodeId1), 3 - maxWithdrawals);
+
+        // Sweep with limit more than available
+        maxWithdrawals = 100;
+        assertGt(maxWithdrawals, stakedMonad.getWithdrawIdsSize(nodeId1));
+        StakerFaker.mockWithdraw(nodeId1, 1, true); // withdraw id 1
+        StakerFaker.mockWithdraw(nodeId1, 2, true); // withdraw id 2
+        stakedMonad.sweep(nodeIds, maxWithdrawals);
+        assertEq(stakedMonad.getWithdrawIdsSize(nodeId1), 0);
+    }
+
+    function test_sweepForced() public {
+        // Add node
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        stakedMonad.addNode(nodeId1);
+
+        // Prep vault: set weight, deposit, submit ingress batch
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 100e18, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+        stakedMonad.deposit{value: 100 ether}(0, ADMIN);
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        stakedMonad.submitBatch();
+
+        // Force unbond node
+        stakedMonad.disableNode(nodeId1);
+        StakerFaker.mockUndelegate(nodeId1, 100 ether, 255, true);
+        stakedMonad.unbondDisableNode(nodeId1);
+
+        // Warp forward to simulate unlocks becoming withdrawable
+        StakerFaker.mockGetEpoch(100, false);
+
+        uint64[] memory nodeIds = new uint64[](1);
+        nodeIds[0] = nodeId1;
+
+        // Regular sweep will not withdraw node
+        assertTrue(stakedMonad.isForceWithdrawPending(nodeId1));
+        stakedMonad.sweep(nodeIds, 255);
+        assertTrue(stakedMonad.isForceWithdrawPending(nodeId1));
+
+        // Force sweep will withdraw node
+        StakerFaker.mockWithdraw(nodeId1, 255, true);
+        stakedMonad.sweepForced(nodeIds);
+        assertFalse(stakedMonad.isForceWithdrawPending(nodeId1));
+    }
+
     function test_weightImbalance_under_allocation(uint96 depositAmount) public {
         vm.assume(depositAmount >= MINIMUM_DEPOSIT);
         vm.assume(depositAmount < FUNDING_AMOUNT);

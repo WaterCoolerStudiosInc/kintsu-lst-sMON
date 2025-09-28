@@ -126,6 +126,7 @@ abstract contract Staker {
         if (_isForceWithdrawPending[val_id]) revert MaxPendingWithdrawals();
         withdrawId = FORCED_WITHDRAW_ID;
         _undelegate(val_id, amount, withdrawId);
+        _isForceWithdrawPending[val_id] = true;
     }
 
     /**
