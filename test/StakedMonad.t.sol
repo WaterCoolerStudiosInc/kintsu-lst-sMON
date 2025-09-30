@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {Test, stdError, console} from "forge-std/src/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {StakedMonad, Registry, CustomErrors, PausableUpgradeable, IAccessControl} from "../src/StakedMonad.sol";
+import {StakedMonad, Registry, Staker, CustomErrors, PausableUpgradeable, IAccessControl} from "../src/StakedMonad.sol";
 import {StakerFaker} from "./StakerFaker.sol";
 
 contract StakedMonadTest is Test, StakerFaker {
@@ -1004,6 +1004,76 @@ contract StakedMonadTest is Test, StakerFaker {
         StakerFaker.mockWithdraw(nodeId1, 2, true); // withdraw id 2
         stakedMonad.sweep(nodeIds, maxWithdrawals);
         assertEq(stakedMonad.getWithdrawIdsSize(nodeId1), 0);
+    }
+
+    function test_sweep_at_withdraw_id_threshold() public {
+        // Add node
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        stakedMonad.addNode(nodeId1);
+
+        // Prep vault: set weight, deposit, submit ingress batch
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 100e18, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+        stakedMonad.deposit{value: 1000 ether}(0, ADMIN);
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        stakedMonad.submitBatch();
+
+        // Create 255 withdraw ids exhausting pending limit
+        uint64 nextEpoch = 2;
+        uint8 nextWithdrawId = 0;
+        for (uint256 i; i < 255; ++i) {
+            uint96 spotValue = stakedMonad.requestUnlock(1e18, 0);
+            StakerFaker.mockGetEpoch(nextEpoch++, false);
+            StakerFaker.mockUndelegate(nodeId1, spotValue, nextWithdrawId++, true);
+            stakedMonad.submitBatch();
+        }
+
+        assertEq(stakedMonad.getWithdrawIdsSize(nodeId1), 255);
+        assertEq(stakedMonad.getWithdrawIds(nodeId1).length, 255);
+        assertEq(stakedMonad.getWithdrawIds(nodeId1)[255 - 1], 254, "Last withdrawal id should be 254");
+
+        // Cannot create another withdraw id
+        uint96 lastSpotValue = stakedMonad.requestUnlock(1e18, 0);
+        StakerFaker.mockGetEpoch(nextEpoch++, false);
+        vm.expectRevert(Staker.MaxPendingWithdrawals.selector);
+        stakedMonad.submitBatch();
+
+        // Warp forward to simulate unlocks becoming withdrawable
+        nextEpoch += 7;
+        StakerFaker.mockGetEpoch(nextEpoch, false);
+
+        uint64[] memory nodeIds = new uint64[](1);
+        nodeIds[0] = nodeId1;
+
+        // Sweep first withdraw id: [0]
+        StakerFaker.mockWithdraw(nodeId1, 0, true); // withdraw id 0
+        stakedMonad.sweep(nodeIds, 1);
+        assertEq(stakedMonad.getWithdrawIdsSize(nodeId1), 255 - 1, "Tracked ids should have decreased");
+        assertEq(stakedMonad.getWithdrawIds(nodeId1)[0], 1, "First withdrawal id should now be 1");
+
+        // Create another withdraw id beginning at 0
+        StakerFaker.mockUndelegate(nodeId1, lastSpotValue, 0, true);
+        stakedMonad.submitBatch();
+
+        assertEq(stakedMonad.getWithdrawIdsSize(nodeId1), 254 + 1, "Tracked ids should have increased");
+        assertEq(stakedMonad.getWithdrawIds(nodeId1).length, 254 + 1, "Tracked ids should have increased");
+        assertEq(stakedMonad.getWithdrawIds(nodeId1)[254], 0, "Last withdrawal id should now be 0");
+
+        // Warp forward to simulate latest unlock becoming withdrawable
+        nextEpoch += 7;
+        StakerFaker.mockGetEpoch(nextEpoch, false);
+
+        // Sweep 255 withdraw ids to iterate over modulo gap: [1, 0]
+        for (uint256 i; i < 255; ++i) {
+            StakerFaker.mockWithdraw(nodeId1, uint8(i), true);
+        }
+        stakedMonad.sweep(nodeIds, 255);
+
+        assertEq(stakedMonad.getWithdrawIdsSize(nodeId1), 0, "Should be no tracked ids remaining");
+        assertEq(stakedMonad.getWithdrawIds(nodeId1).length, 0, "Should be no tracked ids remaining");
     }
 
     function test_sweepForced() public {
