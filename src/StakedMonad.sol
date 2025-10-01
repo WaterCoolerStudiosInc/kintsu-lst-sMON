@@ -281,7 +281,11 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
      * @dev Can be globally disabled by ROLE_TOGGLE_INSTANT_UNLOCK
      * @dev Might need to first call `sweep()`
      */
-    function instantUnlock(uint96 shares, uint96 minSpotValue, address receiver) external returns (uint96 spotValue) {
+    function instantUnlock(
+        uint96 shares,
+        uint96 minSpotValue,
+        address receiver
+    ) external whenNotPaused returns (uint96 spotValue) {
         if (!isInstantUnlockEnabled) revert InstantUnlockDisabled();
 
         _updateFees();
