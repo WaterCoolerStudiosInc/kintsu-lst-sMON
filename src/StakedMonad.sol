@@ -306,6 +306,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
         // Remove instantly redeemed assets from current batch
         batchDepositRequest.assets = _batchAssets - spotValue;
+        totalPooled -= spotValue;
 
         // Directly transfer all shares avoiding need for approval
         ERC20Upgradeable._transfer(msg.sender, address(this), shares);

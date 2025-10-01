@@ -575,6 +575,26 @@ contract StakedMonadTest is Test, StakerFaker {
         assertEq(stakedMonad.balanceOf(ADMIN), adminSharesBalance);
     }
 
+    function test_instant_unlock_does_not_change_ratio() public {
+        // Alice deposits 5 MON
+        vm.startPrank(ALICE);
+        stakedMonad.deposit{value: 5 ether}(0, ALICE);
+
+        // Bob deposits 10 MON
+        vm.startPrank(BOB);
+        uint96 sharesToRedeem = stakedMonad.deposit{value: 10 ether}(0, BOB);
+
+        // Allow some management fees to accumulate
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        // Bob unlocks all of his shares instantly
+        uint96 shareValueBefore = stakedMonad.convertToAssets(1e18);
+        stakedMonad.instantUnlock(sharesToRedeem, 0, BOB);
+        uint96 shareValueAfter = stakedMonad.convertToAssets(1e18);
+
+        assertEq(shareValueAfter, shareValueBefore);
+    }
+
     function test_claimProtocolFees_must_have_role() public {
         bytes32 role = stakedMonad.ROLE_FEE_CLAIMER();
 
