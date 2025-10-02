@@ -965,6 +965,42 @@ contract StakedMonadTest is Test, StakerFaker {
         stakedMonad.unbondDisableNode(nodeId1);
     }
 
+    function test_unbond_disabled_node_does_not_change_ratio() public {
+        // Add nodes
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        uint64 nodeId2 = 2;
+        stakedMonad.addNode(nodeId1);
+        stakedMonad.addNode(nodeId2);
+
+        // Set weights
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](2);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 50_00, isIncreasing: true});
+        weightDeltas[1] = Registry.WeightDelta({nodeId: nodeId2, delta: 50_00, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Deposit and delegate 50 MON to each node
+        stakedMonad.deposit{value: 100 ether}(0, ADMIN);
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId1, true);
+        StakerFaker.mockDelegate(nodeId2, true);
+        stakedMonad.submitBatch();
+
+        // Disable node 1
+        stakedMonad.disableNode(nodeId1);
+
+        // Allow some management fees to accumulate
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+
+        // Force unbond node 1
+        uint96 shareValueBefore = stakedMonad.convertToAssets(1e18);
+        StakerFaker.mockUndelegate(nodeId1, 50 ether, 255, true);
+        stakedMonad.unbondDisableNode(nodeId1);
+        uint96 shareValueAfter = stakedMonad.convertToAssets(1e18);
+
+        assertEq(shareValueAfter, shareValueBefore);
+    }
+
     function test_sweep_withdraws_continuous_ids() public {
         // Add node
         vm.startPrank(ADMIN);
@@ -1102,16 +1138,18 @@ contract StakedMonadTest is Test, StakerFaker {
         uint64 nodeId1 = 1;
         stakedMonad.addNode(nodeId1);
 
-        // Prep vault: set weight, deposit, submit ingress batch
+        // Set weight
         Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
         weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 100e18, isIncreasing: true});
         stakedMonad.updateWeights(weightDeltas);
+
+        // Deposit and delegate 100 MON to node
         stakedMonad.deposit{value: 100 ether}(0, ADMIN);
         StakerFaker.mockGetEpoch(1, false);
         StakerFaker.mockDelegate(nodeId1, true);
         stakedMonad.submitBatch();
 
-        // Force unbond node
+        // Disable and force unbond node
         stakedMonad.disableNode(nodeId1);
         StakerFaker.mockUndelegate(nodeId1, 100 ether, 255, true);
         stakedMonad.unbondDisableNode(nodeId1);
@@ -1128,8 +1166,12 @@ contract StakedMonadTest is Test, StakerFaker {
         assertTrue(stakedMonad.isForceWithdrawPending(nodeId1));
 
         // Force sweep will withdraw node
+        uint96 shareValueBefore = stakedMonad.convertToAssets(1e18);
         StakerFaker.mockWithdraw(nodeId1, 255, true);
         stakedMonad.sweepForced(nodeIds);
+        uint96 shareValueAfter = stakedMonad.convertToAssets(1e18);
+        assertEq(shareValueAfter, shareValueBefore, "Force sweep should not change the redemption ratio");
+
         assertFalse(stakedMonad.isForceWithdrawPending(nodeId1));
     }
 

@@ -515,6 +515,8 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
     /**
      * @notice Forcibly unbonds funds from a disabled node
      * @dev This function is for emergency/cleanup purposes and does not depend on the standard batching process
+     * @dev Does NOT decrease `totalPooled` because funds never leave the protocol's custody
+     * @dev Funds will be scheduled for redelegation during `sweepForced()`
      * @param nodeId - ID of the disabled node to unbond from
      */
     function unbondDisableNode(uint64 nodeId) external whenNotPaused onlyRole(ROLE_REMOVE_NODE) {
@@ -529,11 +531,6 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
         // Immediately update storage to reflect the unbonding.
         node.staked = 0;
-
-        // We also need to remove the unbonded amount from totalPooled
-        // as it's no longer "pooled" for staking.
-        // The funds are now in a "pending unbond" state.
-        totalPooled -= _staked;
     }
 
     /**
