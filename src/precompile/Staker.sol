@@ -69,13 +69,16 @@ abstract contract Staker {
 
     /**
      * @notice Provides the number of epochs that must pass before an undelegation can be withdrawn
-     * @dev TODO: Robustly provide from a reliable source or as a constant
+     * @dev Imported from https://docs.monad.xyz/developer-essentials/staking/staking-precompile#constants
      */
     function getWithdrawDelay() internal view returns (uint8) {
         // Monad Mainnet
-        if (block.chainid == 143) return 7;
-        // Local network
-        if (block.chainid == 31337) return 7;
+        if (block.chainid == 143) return 1;
+        // Monad Public Testnet
+        if (block.chainid == 10143) return 1;
+        // Monad Testnet-2
+        if (block.chainid == 30143) return 1;
+
         return 1;
     }
 

@@ -1098,7 +1098,7 @@ contract StakedMonadTest is Test, StakerFaker {
         stakedMonad.submitBatch();
 
         // Warp forward to simulate unlocks becoming withdrawable
-        nextEpoch += 7;
+        nextEpoch += 1;
         StakerFaker.mockGetEpoch(nextEpoch, false);
 
         uint64[] memory nodeIds = new uint64[](1);
@@ -1119,7 +1119,7 @@ contract StakedMonadTest is Test, StakerFaker {
         assertEq(stakedMonad.getWithdrawIds(nodeId1)[254], 0, "Last withdrawal id should now be 0");
 
         // Warp forward to simulate latest unlock becoming withdrawable
-        nextEpoch += 7;
+        nextEpoch += 1;
         StakerFaker.mockGetEpoch(nextEpoch, false);
 
         // Sweep 255 withdraw ids to iterate over modulo gap: [1, 0]
