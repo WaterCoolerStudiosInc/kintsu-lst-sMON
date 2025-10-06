@@ -65,8 +65,6 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
     event UnlockRequested(address indexed staker, uint256 unlockId, uint256 shares, uint256 spotValue, uint256 toll);
     event UnlockCancelled(address indexed staker, uint256 unlockId);
     event UnlockRedeemed(address indexed staker, uint256 unlockId, uint256 amount);
-    event BatchSent(uint256 batchId, uint256 shares, uint256 spotValue);
-    event Sync(uint256 rewarded, uint256 slashed);
     event Contribution(uint256 amount, address benefactor);
     event FeesWithdrawn(uint256 managementFeeShares, uint256 exitFeeShares);
     event ManagementFeeAdjusted(uint256 newFee);
@@ -597,48 +595,6 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
         totalPooled += uint96(claimedRewards);
         batchDepositRequests[currentBatchId].assets += uint96(claimedRewards);
-    }
-
-    /**
-     * @notice Syncs the staking metrics with precompile to socialize slashing
-     * @dev Updates `totalPooled` and `Registry.node[].staked`
-     */
-    function syncStaking() external whenNotPaused {
-        uint96 rewards;
-        uint96 slashed;
-
-        uint256 n = Registry.nodes.length;
-        for (uint256 i; i < n; ++i) {
-            Node storage node = Registry.nodes[i];
-            Node memory _node = node; // shadow (SLOAD 1 slot)
-            (
-                uint256 stake,
-                /* uint256 acc_reward_per_token */,
-                /* uint256 rewards */,
-                uint256 delta_stake,
-                uint256 next_delta_stake,
-                /* uint256 delta_epoch */,
-                /* uint256 next_delta_epoch */
-            ) = Staker.getDelegator(_node.id, address(this));
-            uint96 oldStake = _node.staked;
-            uint96 newStake = uint96(stake + delta_stake + next_delta_stake);
-
-            if (newStake > oldStake) {
-                // Compound
-                rewards += newStake - oldStake;
-                node.staked = newStake;
-            } else if (newStake < oldStake) {
-                // Slash
-                slashed += oldStake - newStake;
-                node.staked = newStake;
-            }
-        }
-
-        if (rewards > 0 || slashed > 0) {
-            totalPooled = totalPooled + rewards - slashed;
-        }
-
-        emit Sync(rewards, slashed);
     }
 
     /**
