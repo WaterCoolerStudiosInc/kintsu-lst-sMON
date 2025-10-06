@@ -117,6 +117,13 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
         Initializable._disableInitializers();
     }
 
+    /**
+     * @dev It is recommended to transfer a small amount of MON when initializing to mitigate a rare DOS when:
+     *      1) All users make unlock requests
+     *      2) Batch is submitted, withdraw delay completes, and all sweep() calls are performed
+     *      3) Some dust is still pending undelegation
+     *      4) All unlock requests are redeemed
+     */
     function initialize(address admin) external payable initializer {
         UUPSUpgradeable.__UUPSUpgradeable_init();
         ERC20Upgradeable.__ERC20_init("Kintsu Staked Monad", "sMON");
@@ -418,9 +425,8 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
     /**
      * @notice Step 2 of 2 in process of withdrawing assets
-     * @notice Returns original deposit amount plus interest
      * @notice Associated batch must have been submitted and the cooldown period elapsed
-     * @dev Might need to first call `sweep()`
+     * @dev Might need to first call `sweep()` to make funds available
      * @dev Deletes the caller's unlock request
      */
     function redeem(uint256 unlockIndex, address payable receiver) external whenNotPaused returns (uint96 assets) {
@@ -445,6 +451,14 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
     /**
      * @notice Processes deposit and withdrawal requests and allocates MON according to Registry weights
+     * @dev Might need to first call `sweep()`
+     * @dev For a net ingress batch, the amount bonded may be less than the requested amount due to integer arithmetic.
+     *      The remaining amount, or 'dust' is scheduled to be bonded in the next batch.
+     * @dev For a net egress batch, the amount unbonded may be less than the requested amount due to integer arithmetic.
+     *      The remaining amount, or 'dust' is scheduled to be unbonded in the next batch.
+     *      In this scenario, `totalPooled` is temporarily increased by this dust amount to account for the assets
+     *      that were requested to be unbonded but were not unbonded from nodes, ensuring they remain trackable
+     *      in the pool for the next attempt.
      */
     function submitBatch() external whenNotPaused {
         _updateFees();

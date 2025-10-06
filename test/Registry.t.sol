@@ -28,7 +28,7 @@ contract RegistryTest is Test, StakerFaker {
         vm.deal(CHARLIE, FUNDING_AMOUNT);
 
         StakedMonad stakedMonadImpl = new StakedMonad();
-        ERC1967Proxy stakedMonadProxy = new ERC1967Proxy(
+        ERC1967Proxy stakedMonadProxy = new ERC1967Proxy{value: 0.01 ether}(
             address(stakedMonadImpl),
             abi.encodeCall(StakedMonad.initialize, (ADMIN))
         );

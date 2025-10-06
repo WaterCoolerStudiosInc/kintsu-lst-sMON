@@ -26,7 +26,7 @@ contract DeployCoreProxy is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         // Deploy and initialize proxy
-        ERC1967Proxy stakedMonadProxy = new ERC1967Proxy(
+        ERC1967Proxy stakedMonadProxy = new ERC1967Proxy{value: 0.01 ether}(
             stakedMonadImpl,
             abi.encodeCall(StakedMonad.initialize, (deployer))
         );
