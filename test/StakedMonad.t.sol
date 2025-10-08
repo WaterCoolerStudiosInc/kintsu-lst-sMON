@@ -595,6 +595,127 @@ contract StakedMonadTest is Test, StakerFaker {
         assertEq(shareValueAfter, shareValueBefore);
     }
 
+    function test_batch_delay_when_not_in_epoch_delay_period() public {
+        // Add 1 node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Set weight to 100
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Create ingress batch with 100 MON deposit and 0 unlocks
+        vm.startPrank(ALICE);
+        stakedMonad.deposit{value: 100 ether}(0, ALICE);
+
+        // Batch is submitted in beginning of epoch 1 (not delay period)
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId, true);
+        stakedMonad.submitBatch();
+
+        // Create ingress batch with 1 MON deposit
+        stakedMonad.deposit{value: 1 ether}(0, ALICE);
+
+        vm.expectRevert(CustomErrors.MinimumBatchDelay.selector);
+        stakedMonad.submitBatch();
+
+        // Can submit batch in 1 more epoch
+        StakerFaker.mockGetEpoch(1 + 1, false);
+        stakedMonad.submitBatch();
+    }
+
+    function test_batch_delay_when_in_epoch_delay_period() public {
+        // Add 1 node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Set weight to 100
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Create ingress batch with 100 MON deposit and 0 unlocks
+        vm.startPrank(ALICE);
+        stakedMonad.deposit{value: 100 ether}(0, ALICE);
+
+        // Batch is submitted in end of epoch 1 (delay period)
+        StakerFaker.mockGetEpoch(1, true);
+        StakerFaker.mockDelegate(nodeId, true);
+        stakedMonad.submitBatch();
+
+        // Create ingress batch with 1 MON deposit
+        stakedMonad.deposit{value: 1 ether}(0, ALICE);
+
+        // Cannot submit batch again in same epoch
+        vm.expectRevert(CustomErrors.MinimumBatchDelay.selector);
+        stakedMonad.submitBatch();
+
+        // Cannot submit batch again in next epoch
+        StakerFaker.mockGetEpoch(1 + 1, false);
+        vm.expectRevert(CustomErrors.MinimumBatchDelay.selector);
+        stakedMonad.submitBatch();
+
+        // Can submit batch in 2 more epochs
+        StakerFaker.mockGetEpoch(1 + 2, false);
+        stakedMonad.submitBatch();
+    }
+
+    function test_batch_delay_with_neutral_batch() public {
+        // Add 1 node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Disable exit fee for easier creation of neutral batch
+        stakedMonad.setExitFee(0);
+
+        // Set weight to 100
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Create neutral batch with 1 MON deposit and 1 MON worth of unlock
+        vm.startPrank(ALICE);
+        uint96 shares = stakedMonad.deposit{value: 1 ether}(0, ALICE);
+        stakedMonad.requestUnlock(shares, 0);
+
+        // Neutral batch is submitted in epoch 1
+        StakerFaker.mockGetEpoch(1, false);
+        stakedMonad.submitBatch();
+
+        // Create ingress batch with 1 MON deposit
+        stakedMonad.deposit{value: 1 ether}(0, ALICE);
+
+        // Can submit another batch in same epoch
+        StakerFaker.clearMocks();
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId, true);
+        stakedMonad.submitBatch();
+    }
+
+    function test_batch_cannot_be_empty() public {
+        // Add 1 node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Disable exit fee for easier creation of neutral batch
+        stakedMonad.setExitFee(0);
+
+        // Set weight to 100
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Attempt to submit neutral batch with 0 MON deposit and 0 MON worth of unlock
+        StakerFaker.mockGetEpoch(1, false);
+        vm.expectRevert(CustomErrors.EmptyBatch.selector);
+        stakedMonad.submitBatch();
+    }
+
     function test_claimProtocolFees_must_have_role() public {
         bytes32 role = stakedMonad.ROLE_FEE_CLAIMER();
 
