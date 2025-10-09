@@ -39,7 +39,6 @@ cast call $SMON "balanceOf(address)(uint256)" $ME
 cast call $SMON "getAllUserUnlockRequests(address)((uint96,uint96,uint40,uint16)[])" $ME
 cast send $SMON --private-key $PK "deposit(uint96,address)(uint96)" 0 $ME --value "1 ether"
 cast send $SMON --private-key $PK "requestUnlock(uint96,uint96)(uint96)" "1 ether" 0
-cast send $SMON --private-key $PK "instantUnlock(uint96,uint96,address)(uint96)" "1 ether" 0 $ME
 cast send $SMON --private-key $PK "redeem(uint256,address)(uint96)" 0 $ME
 cast send $SMON --private-key $PK "submitBatch()"
 cast send $SMON --private-key $PK "sweep(uint64[],uint8)" "[3]" 32

@@ -28,12 +28,6 @@ interface CustomErrors {
     /// @notice Thrown when trying to set a fee percentage above the maximum allowed
     error FeeTooLarge();
 
-    /// @notice Thrown when the instant unlock feature is disabled
-    error InstantUnlockDisabled();
-
-    /// @notice Thrown when trying to instantly unlock more shares than can be matched with incoming shares
-    error InstantUnlockThreshold();
-
     /// @notice Thrown when trying to interact or lookup a node that does not currently exist
     error InvalidNode();
 

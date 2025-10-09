@@ -68,10 +68,6 @@ contract TransferRoles is Script {
             bytes32 ROLE_PAUSE = stakedMonad.ROLE_PAUSE();
             stakedMonad.grantRole(ROLE_PAUSE, newAdmin);
             stakedMonad.renounceRole(ROLE_PAUSE, sender);
-
-            bytes32 ROLE_TOGGLE_INSTANT_UNLOCK = stakedMonad.ROLE_TOGGLE_INSTANT_UNLOCK();
-            stakedMonad.grantRole(ROLE_TOGGLE_INSTANT_UNLOCK, newAdmin);
-            stakedMonad.renounceRole(ROLE_TOGGLE_INSTANT_UNLOCK, sender);
         }
 
         // Default admin role

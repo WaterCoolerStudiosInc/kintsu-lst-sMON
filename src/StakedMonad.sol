@@ -86,7 +86,6 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
     // Pause related roles
     bytes32 public constant ROLE_PAUSE = keccak256("ROLE_PAUSE");
-    bytes32 public constant ROLE_TOGGLE_INSTANT_UNLOCK = keccak256("ROLE_TOGGLE_INSTANT_UNLOCK");
 
     uint256 public constant MINIMUM_CONTRIBUTE_THRESHOLD = 5_000 ether;
 
@@ -95,9 +94,6 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
     /// @dev Tracks the current batch being populated. Initialized to 1
     uint40 public currentBatchId;
-
-    /// @dev Flag for allowing instant unlocks
-    bool public isInstantUnlockEnabled;
 
     ExitFee private exitFee;
     ManagementFee private managementFee;
@@ -150,10 +146,8 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
         // Other roles managed by DEFAULT_ADMIN_ROLE
         AccessControlUpgradeable._grantRole(ROLE_PAUSE, admin);
-        AccessControlUpgradeable._grantRole(ROLE_TOGGLE_INSTANT_UNLOCK, admin);
 
         currentBatchId = 1;
-        isInstantUnlockEnabled = true;
 
         managementFee = ManagementFee({
             bips: 2_00, // initial fee of 2.00%
@@ -216,16 +210,6 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
         return userUnlockRequests[user];
     }
 
-    /**
-     * @notice Shares that can be unlocked instantly at the current block
-     * @dev This function will technically under report unlockable shares when exit fees are present
-            due to the fee shares not being undelegated and therefore not matched with pending deposits
-     */
-    function getInstantUnlockableShares() external view returns (uint96) {
-        if (!isInstantUnlockEnabled) return 0;
-        return convertToShares(batchDepositRequests[currentBatchId].assets);
-    }
-
     function getExitFeeBips() external view returns (uint16) {
         return exitFee.bips;
     }
@@ -278,55 +262,6 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
         totalPooled += uint96(msg.value);
 
         batchDepositRequests[currentBatchId].assets += uint96(msg.value);
-    }
-
-    /**
-     * @notice Redeems shares for assets immediately if sufficient deposits are pending
-     * @notice Applies the exit fee if present
-     * @dev Can be globally disabled by ROLE_TOGGLE_INSTANT_UNLOCK
-     * @dev Might need to first call `sweep()`
-     */
-    function instantUnlock(
-        uint96 shares,
-        uint96 minSpotValue,
-        address receiver
-    ) external whenNotPaused returns (uint96 spotValue) {
-        if (!isInstantUnlockEnabled) revert InstantUnlockDisabled();
-
-        _updateFees();
-
-        // Calculate exit toll (if any)
-        uint96 sharesToFee = isExitFeeExempt[msg.sender] ? 0 : uint96(uint256(shares) * exitFee.bips / BIPS);
-
-        uint96 sharesToUnlock = shares - sharesToFee;
-        spotValue = convertToAssets(sharesToUnlock);
-
-        if (spotValue == 0) revert NoChange();
-        if (spotValue < minSpotValue) revert MinimumUnlock();
-
-        Batch storage batchDepositRequest = batchDepositRequests[currentBatchId];
-        uint96 _batchAssets = batchDepositRequest.assets; // shadow
-
-        if (spotValue > _batchAssets) revert InstantUnlockThreshold();
-
-        // Remove instantly redeemed assets from current batch
-        batchDepositRequest.assets = _batchAssets - spotValue;
-        totalPooled -= spotValue;
-
-        // Directly transfer all shares avoiding need for approval
-        ERC20Upgradeable._transfer(msg.sender, address(this), shares);
-
-        // Burn shares that will be instantly redeemed
-        ERC20Upgradeable._burn(address(this), sharesToUnlock);
-
-        // Claim protocol shares skipping escrow
-        if (sharesToFee > 0) {
-            exitFee.protocolShares += sharesToFee;
-        }
-
-        // Instantly redeem
-        (bool success,) = receiver.call{value: spotValue}("");
-        if (!success) revert TransferFailed();
     }
 
     /*
@@ -651,10 +586,6 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
     function setExitFeeExemption(address user, bool isExempt) external onlyRole(ROLE_FEE_EXEMPTION) {
         isExitFeeExempt[user] = isExempt;
-    }
-
-    function setInstantUnlock(bool isEnabled) external onlyRole(ROLE_TOGGLE_INSTANT_UNLOCK) {
-        isInstantUnlockEnabled = isEnabled;
     }
 
     function pause() external onlyRole(ROLE_PAUSE) {
