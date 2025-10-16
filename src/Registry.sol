@@ -187,6 +187,7 @@ abstract contract Registry is CustomErrors {
 
         // Allow this node to be added again via `addNode()`
         _nodeIds.remove(nodeId);
+        isNodeDisabled[nodeId] = false;
 
         emit NodeRemoved(nodeId);
     }

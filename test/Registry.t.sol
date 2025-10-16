@@ -130,6 +130,29 @@ contract RegistryTest is Test, StakerFaker {
         assertEq(stakedMonad.getNodes().length, 1);
     }
 
+    function test_addNode_can_add_disabled_node_again_after_removal() public {
+        vm.startPrank(ADMIN);
+
+        // Add node
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+        assertEq(stakedMonad.getNodes().length, 1);
+
+        // Disable and remove node
+        stakedMonad.disableNode(nodeId);
+        stakedMonad.removeNode(nodeId);
+        assertEq(stakedMonad.getNodes().length, 0);
+
+        // Add node again
+        stakedMonad.addNode(nodeId);
+        assertEq(stakedMonad.getNodes().length, 1);
+
+        // Update weight
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100e18, isIncreasing: true });
+        stakedMonad.updateWeights(weightDeltas);
+    }
+
     function test_addNode_must_have_role() public {
         vm.startPrank(BOB);
 
