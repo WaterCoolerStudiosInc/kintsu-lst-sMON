@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import {Test} from "forge-std/src/Test.sol";
-import {IPrecompile} from "../src/precompile/Staker.sol";
+import {IPrecompile} from "../src/precompile/StakerUpgradeable.sol";
 
 abstract contract StakerFaker is Test {
     address private constant PRECOMPILE = 0x0000000000000000000000000000000000001000;

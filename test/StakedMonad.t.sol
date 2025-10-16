@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {Test, stdError, console} from "forge-std/src/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {StakedMonad, Registry, Staker, CustomErrors, PausableUpgradeable, IAccessControl} from "../src/StakedMonad.sol";
+import {StakedMonad, Registry, StakerUpgradeable, CustomErrors, PausableUpgradeable, IAccessControl} from "../src/StakedMonad.sol";
 import {StakerFaker} from "./StakerFaker.sol";
 
 contract StakedMonadTest is Test, StakerFaker {
@@ -1035,7 +1035,7 @@ contract StakedMonadTest is Test, StakerFaker {
         // Cannot create another withdraw id
         uint96 lastSpotValue = stakedMonad.requestUnlock(1e18, 0);
         StakerFaker.mockGetEpoch(nextEpoch++, false);
-        vm.expectRevert(Staker.MaxPendingWithdrawals.selector);
+        vm.expectRevert(StakerUpgradeable.MaxPendingWithdrawals.selector);
         stakedMonad.submitBatch();
 
         // Warp forward to simulate unlocks becoming withdrawable

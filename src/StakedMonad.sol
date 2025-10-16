@@ -5,7 +5,7 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import "./precompile/Staker.sol";
+import "./precompile/StakerUpgradeable.sol";
 import "./CustomErrors.sol";
 import "./Registry.sol";
 
@@ -17,7 +17,7 @@ import "./Registry.sol";
  *         Facilitates batch processing of deposits and withdrawals
  *         Dynamically adjusts bonding/unbonding node allocation based on Registry weights
  */
-contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Upgradeable, AccessControlUpgradeable, PausableUpgradeable {
+contract StakedMonad is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeable, ERC20Upgradeable, AccessControlUpgradeable, PausableUpgradeable {
     uint16 private constant BIPS = 100_00;
     uint40 private constant YEAR = 365 days;
 
@@ -120,6 +120,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
      */
     function initialize(address admin) external payable initializer {
         UUPSUpgradeable.__UUPSUpgradeable_init();
+        StakerUpgradeable.__Staker_init();
         ERC20Upgradeable.__ERC20_init("Kintsu Staked Monad", "sMON");
         AccessControlUpgradeable.__AccessControl_init();
         PausableUpgradeable.__Pausable_init();
@@ -163,8 +164,8 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
     function _authorizeUpdateWeight() internal view override onlyRole(ROLE_UPDATE_WEIGHTS) {}
     function _authorizeDisableNode() internal view override onlyRole(ROLE_DISABLE_NODE) {}
     function _authorizeRemoveNode(uint64 nodeId) internal view override onlyRole(ROLE_REMOVE_NODE) {
-        if (Staker.getWithdrawIdsSize(nodeId) > 0) revert PendingWithdrawals();
-        if (Staker.isForceWithdrawPending(nodeId)) revert PendingWithdrawals();
+        if (StakerUpgradeable.getWithdrawIdsSize(nodeId) > 0) revert PendingWithdrawals();
+        if (StakerUpgradeable.isForceWithdrawPending(nodeId)) revert PendingWithdrawals();
     }
 
     /**
@@ -368,8 +369,8 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
         BatchSubmission memory batchSubmission = batchSubmissions[userUnlockRequest.batchId]; // shadow (SLOAD 1 slot)
         if (batchSubmission.submissionEpoch == 0) revert BatchNotSubmitted();
 
-        (uint64 currentEpoch,) = Staker.getEpoch();
-        if (currentEpoch < batchSubmission.activationEpoch + Staker.getWithdrawDelay()) revert WithdrawDelay();
+        (uint64 currentEpoch,) = StakerUpgradeable.getEpoch();
+        if (currentEpoch < batchSubmission.activationEpoch + StakerUpgradeable.getWithdrawDelay()) revert WithdrawDelay();
 
         // Delete completed user unlock request
         _deleteUnlockRequest(userUnlockRequestArray, unlockIndex);
@@ -474,7 +475,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
         if (_staked == 0) revert NoChange();
 
         // Directly call undelegate on the Staker precompile.
-        Staker.undelegateForced(nodeId, _staked);
+        StakerUpgradeable.undelegateForced(nodeId, _staked);
 
         // Immediately update storage to reflect the unbonding.
         node.staked = 0;
@@ -489,7 +490,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
     function sweep(uint64[] memory nodeIds, uint8 maxWithdrawsPerNode) external whenNotPaused {
         uint256 len = nodeIds.length;
         for (uint64 i; i < len; ++i) {
-            Staker.withdraw(nodeIds[i], maxWithdrawsPerNode);
+            StakerUpgradeable.withdraw(nodeIds[i], maxWithdrawsPerNode);
         }
     }
 
@@ -504,7 +505,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
         uint256 len = nodeIds.length;
         for (uint64 i; i < len; ++i) {
-            Staker.withdrawForced(nodeIds[i]);
+            StakerUpgradeable.withdrawForced(nodeIds[i]);
         }
 
         uint256 amountWithdrawn = address(this).balance - balanceSnapshot;
@@ -522,7 +523,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
         uint256 len = nodeIds.length;
         for (uint64 i; i < len; ++i) {
-            Staker.claimRewards(nodeIds[i]);
+            StakerUpgradeable.claimRewards(nodeIds[i]);
         }
 
         uint256 claimedRewards = address(this).balance - balanceBefore;
@@ -597,7 +598,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
     }
 
     function _getActivityEpoch() private returns (uint64 currentEpoch, uint64 activityEpoch) {
-        (uint64 _currentEpoch, bool in_epoch_delay_period) = Staker.getEpoch();
+        (uint64 _currentEpoch, bool in_epoch_delay_period) = StakerUpgradeable.getEpoch();
         currentEpoch = _currentEpoch;
         activityEpoch = in_epoch_delay_period ? currentEpoch + 2 : currentEpoch + 1;
     }
@@ -689,7 +690,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
 
             if (bondAmount > 0) {
                 Registry.nodes[i].staked = _nodes[i].staked + bondAmount;
-                Staker.delegate(_nodes[i].id, bondAmount);
+                StakerUpgradeable.delegate(_nodes[i].id, bondAmount);
                 actualBonding += bondAmount;
             }
         }
@@ -737,7 +738,7 @@ contract StakedMonad is CustomErrors, Registry, Staker, UUPSUpgradeable, ERC20Up
             if (unbondAmount > 0) {
                 Registry.nodes[i].staked = _nodes[i].staked - unbondAmount;
                 actualUnbonding += unbondAmount;
-                Staker.undelegate(_nodes[i].id, unbondAmount);
+                StakerUpgradeable.undelegate(_nodes[i].id, unbondAmount);
             }
         }
     }

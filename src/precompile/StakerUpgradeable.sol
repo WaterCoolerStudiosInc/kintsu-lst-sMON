@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+
 interface IPrecompile {
     /// @dev Gas cost ~260850
     function delegate(uint64 val_id) external payable returns (bool);
@@ -31,7 +33,7 @@ interface IPrecompile {
     function getEpoch() external returns (uint64 epoch, bool in_epoch_delay_period);
 }
 
-abstract contract Staker {
+abstract contract StakerUpgradeable is Initializable {
     struct WithdrawIdSummary {
         /// @dev Pointer to the oldest withdraw id within the range of [0, 254]
         uint8 oldest;
@@ -48,11 +50,23 @@ abstract contract Staker {
     uint8 private constant PENDING_WITHDRAWALS_CAPACITY = 255; // [0, 254]
     uint8 private constant FORCED_WITHDRAW_ID = 255;
 
-    mapping(uint64 => WithdrawIdSummary) private _withdrawIds;
-    mapping(uint64 => bool) private _isForceWithdrawPending;
+    // keccak256(abi.encode(uint256(keccak256("wcs.kintsu.storage.Staker")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant StakerStorageLocation = 0xd5d321e774be746819c1749e69f27b3f3e063f791b56826404d788d5a63ed600;
 
-    /// @dev Reserve storage slots to avoid clashes if adding extra variables
-    uint256[64] private __gap;
+    /// @custom:storage-location erc7201:wcs.kintsu.storage.Staker
+    struct StakerStorage {
+        mapping(uint64 => WithdrawIdSummary) withdrawIds;
+        mapping(uint64 => bool) isForceWithdrawPending;
+    }
+
+    function _getStakerStorage() private pure returns (StakerStorage storage $) {
+        assembly {
+            $.slot := StakerStorageLocation
+        }
+    }
+
+    function __Staker_init() internal onlyInitializing {}
+    function __Staker_init_unchained() internal onlyInitializing {}
 
     /**
      * @notice Determine the current epoch and timing within the epoch (before or after the boundary block)
@@ -104,7 +118,8 @@ abstract contract Staker {
      * @return withdrawId - Withdraw ID that tracks this undelegation
      */
     function undelegate(uint64 val_id, uint256 amount) internal returns (uint8 withdrawId) {
-        WithdrawIdSummary storage withdrawIdSummary = _withdrawIds[val_id];
+        StakerStorage storage $ = _getStakerStorage();
+        WithdrawIdSummary storage withdrawIdSummary = $.withdrawIds[val_id];
         WithdrawIdSummary memory _withdrawIdSummary = withdrawIdSummary; // shadow (SLOAD 1 slot)
 
         if (_withdrawIdSummary.size == PENDING_WITHDRAWALS_CAPACITY) revert MaxPendingWithdrawals();
@@ -126,10 +141,11 @@ abstract contract Staker {
      * @return withdrawId - Withdraw ID that tracks this undelegation
      */
     function undelegateForced(uint64 val_id, uint256 amount) internal returns (uint8 withdrawId) {
-        if (_isForceWithdrawPending[val_id]) revert MaxPendingWithdrawals();
+        StakerStorage storage $ = _getStakerStorage();
+        if ($.isForceWithdrawPending[val_id]) revert MaxPendingWithdrawals();
         withdrawId = FORCED_WITHDRAW_ID;
         _undelegate(val_id, amount, withdrawId);
-        _isForceWithdrawPending[val_id] = true;
+        $.isForceWithdrawPending[val_id] = true;
     }
 
     /**
@@ -158,7 +174,8 @@ abstract contract Staker {
      * @param maxWithdraws - maximum quantity of pending withdrawals to process and remove
      */
     function withdraw(uint64 val_id, uint8 maxWithdraws) internal {
-        WithdrawIdSummary memory withdrawIdSummary = _withdrawIds[val_id]; // shadow (SLOAD 1 slot)
+        StakerStorage storage $ = _getStakerStorage();
+        WithdrawIdSummary memory withdrawIdSummary = $.withdrawIds[val_id]; // shadow (SLOAD 1 slot)
         uint8 withdrawCount = withdrawIdSummary.size > maxWithdraws ? maxWithdraws : withdrawIdSummary.size;
 
         // Cheaply return as a no-op if no withdraw ids will be processed
@@ -172,7 +189,7 @@ abstract contract Staker {
 
         withdrawIdSummary.oldest = _modularAdd(withdrawIdSummary.oldest, withdrawCount, PENDING_WITHDRAWALS_CAPACITY);
         withdrawIdSummary.size -= withdrawCount;
-        _withdrawIds[val_id] = withdrawIdSummary;
+        $.withdrawIds[val_id] = withdrawIdSummary;
     }
 
     /**
@@ -180,12 +197,13 @@ abstract contract Staker {
      * @dev Will revert if FORCED_WITHDRAW_ID is not pending
      */
     function withdrawForced(uint64 val_id) internal {
-        if (!_isForceWithdrawPending[val_id]) revert InsufficientPendingWithdrawals();
+        StakerStorage storage $ = _getStakerStorage();
+        if (!$.isForceWithdrawPending[val_id]) revert InsufficientPendingWithdrawals();
 
         bool success = IPrecompile(PRECOMPILE).withdraw(val_id, FORCED_WITHDRAW_ID);
         if (!success) revert PrecompileCallFailed();
 
-        _isForceWithdrawPending[val_id] = false;
+        $.isForceWithdrawPending[val_id] = false;
     }
 
     /**
@@ -219,7 +237,8 @@ abstract contract Staker {
      * @dev Will not include FORCED_WITHDRAW_ID even if present
      */
     function getWithdrawIds(uint64 val_id) public view returns (uint8[] memory) {
-        WithdrawIdSummary memory withdrawIdSummary = _withdrawIds[val_id];
+        StakerStorage storage $ = _getStakerStorage();
+        WithdrawIdSummary memory withdrawIdSummary = $.withdrawIds[val_id];
         uint8[] memory withdrawIds = new uint8[](withdrawIdSummary.size);
         for (uint256 i; i < withdrawIdSummary.size; ++i) {
             withdrawIds[i] = _modularAdd(withdrawIdSummary.oldest, uint8(i), PENDING_WITHDRAWALS_CAPACITY);
@@ -228,11 +247,13 @@ abstract contract Staker {
     }
 
     function getWithdrawIdsSize(uint64 val_id) public view returns (uint256) {
-        return _withdrawIds[val_id].size;
+        StakerStorage storage $ = _getStakerStorage();
+        return $.withdrawIds[val_id].size;
     }
 
     function isForceWithdrawPending(uint64 val_id) public view returns (bool) {
-        return _isForceWithdrawPending[val_id];
+        StakerStorage storage $ = _getStakerStorage();
+        return $.isForceWithdrawPending[val_id];
     }
 
     function _modularAdd(uint8 a, uint8 b, uint8 mod) private pure returns (uint8) {
