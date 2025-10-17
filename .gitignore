@@ -21,6 +21,4 @@ broadcast/
 out/*/*
 !out/KintsuBetaERC1155.sol/*
 !out/StakedMonad.sol/*
-out/*/31337/*
-out/*/31337_deployment.json
-out/*/31337.json
+out/*/31337*.json

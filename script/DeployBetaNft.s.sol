@@ -23,13 +23,19 @@ contract DeployBetaNft is Script {
 
         vm.stopBroadcast();
 
-        writeDeploymentAddress("KintsuBetaERC1155", address(kintsuBetaERC1155));
+        writeArtifacts("KintsuBetaERC1155", "KintsuBetaERC1155", address(kintsuBetaERC1155));
     }
 
-    function writeDeploymentAddress(string memory contractName, address deployment) internal {
+    function writeArtifacts(string memory artifactName, string memory abiSource, address deployment) internal {
         if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) return;
-        string memory path = string(abi.encodePacked("./out/", contractName, ".sol/", vm.toString(block.chainid), "_", "deployment.json"));
-        string memory json = vm.serializeAddress("deployment.json", "address", deployment);
-        vm.writeJson(json, path);
+
+        string memory abiInput = string(abi.encodePacked("./out/", abiSource, ".sol/", abiSource, ".json"));
+        string memory abiJson = vm.readFile(abiInput);
+        string memory abiOutput = string(abi.encodePacked("./out/", artifactName, ".sol/", vm.toString(block.chainid), "_artifact.json"));
+        vm.writeJson(abiJson, abiOutput);
+
+        string memory deploymentJson = vm.serializeAddress("deployment.json", "address", deployment);
+        string memory deploymentOutput = string(abi.encodePacked("./out/", artifactName, ".sol/", vm.toString(block.chainid), "_deployment.json"));
+        vm.writeJson(deploymentJson, deploymentOutput);
     }
 }
