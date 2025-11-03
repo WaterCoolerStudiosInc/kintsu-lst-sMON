@@ -110,6 +110,10 @@ contract StakedMonadTest is Test, StakerFaker {
         uint256 protocolShares = (sharesAlice * 2_00 + (BIPS - 1)) / BIPS;
         assertEq(stakedMonad.getMintableProtocolShares(), protocolShares);
         assertEq(stakedMonad.totalShares(), sharesAlice + protocolShares);
+
+        // Redemption ratio has shrunk without compounded yield
+        assertGt(stakedMonad.convertToShares(1 ether), 1 ether);
+        assertLt(stakedMonad.convertToAssets(1 ether), 1 ether);
     }
 
     function test_deposit_2_nodes(uint96 depositAmount) public {
@@ -149,6 +153,31 @@ contract StakedMonadTest is Test, StakerFaker {
         uint256 protocolShares = (sharesAlice * 2_00 + (BIPS - 1)) / BIPS;
         assertEq(stakedMonad.getMintableProtocolShares(), protocolShares);
         assertEq(stakedMonad.totalShares(), sharesAlice + protocolShares);
+    }
+
+    function test_deposit_increases_management_fees(uint96 depositAmount) public {
+        vm.assume(depositAmount >= MINIMUM_DEPOSIT);
+        vm.assume(depositAmount < FUNDING_AMOUNT);
+
+        // Add 1 node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Set weights
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+
+        assertEq(stakedMonad.getMintableProtocolShares(), 0, "There are no accumulated fees");
+
+        // Alice deposits MON
+        vm.startPrank(ALICE);
+        stakedMonad.deposit{value: depositAmount}(0, ALICE);
+
+        assertEq(stakedMonad.getMintableProtocolShares(), 0, "Fees have not accumulated yet");
+        vm.warp(vm.getBlockTimestamp() + 30 days);
+        assertGt(stakedMonad.getMintableProtocolShares(), 0, "Fees have accumulated");
     }
 
     function test_unstake_1_nodes_1_requests(uint96 depositAmount) public {
@@ -1282,6 +1311,7 @@ contract StakedMonadTest is Test, StakerFaker {
         uint256 shareValueSnapshot = stakedMonad.convertToAssets(1e18);
         stakedMonad.contributeToPool{value: 1 ether}(ADMIN);
         assertGt(stakedMonad.convertToAssets(1e18), shareValueSnapshot);
+        assertLt(stakedMonad.convertToShares(1e18), shareValueSnapshot);
     }
 
     function test_weightImbalance_under_allocation(uint96 depositAmount) public {
