@@ -1086,12 +1086,27 @@ contract StakedMonadTest is Test, StakerFaker {
 
         // Deposit and delegate 100 MON to node
         stakedMonad.deposit{value: 100 ether}(0, ADMIN);
+
+        // Attempt to submit batch but precompile (delegate) fails
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId1, false);
+        vm.expectRevert(StakerUpgradeable.PrecompileCallFailed.selector);
+        stakedMonad.submitBatch();
+
+        // Submit batch
         StakerFaker.mockGetEpoch(1, false);
         StakerFaker.mockDelegate(nodeId1, true);
         stakedMonad.submitBatch();
 
-        // Disable and force unbond node
+        // Disable node
         stakedMonad.disableNode(nodeId1);
+
+        // Attempt to unbond disabled node but precompile (undelegate) fails
+        StakerFaker.mockUndelegate(nodeId1, 100 ether, 255, false);
+        vm.expectRevert(StakerUpgradeable.PrecompileCallFailed.selector);
+        stakedMonad.unbondDisableNode(nodeId1);
+
+        // Force unbond node
         StakerFaker.mockUndelegate(nodeId1, 100 ether, 255, true);
         stakedMonad.unbondDisableNode(nodeId1);
 
@@ -1106,14 +1121,35 @@ contract StakedMonadTest is Test, StakerFaker {
         stakedMonad.sweep(nodeIds, 255);
         assertTrue(stakedMonad.isForceWithdrawPending(nodeId1));
 
-        // Force sweep will withdraw node
         uint96 shareValueBefore = stakedMonad.convertToAssets(1e18);
+
+        // Attempt to forcibly sweep but precompile (withdraw) fails
+        StakerFaker.mockWithdraw(nodeId1, 255, false);
+        vm.expectRevert(StakerUpgradeable.PrecompileCallFailed.selector);
+        stakedMonad.sweepForced(nodeIds);
+
+        // Force sweep will withdraw node
         StakerFaker.mockWithdraw(nodeId1, 255, true);
         stakedMonad.sweepForced(nodeIds);
         uint96 shareValueAfter = stakedMonad.convertToAssets(1e18);
         assertEq(shareValueAfter, shareValueBefore, "Force sweep should not change the redemption ratio");
 
         assertFalse(stakedMonad.isForceWithdrawPending(nodeId1));
+    }
+
+    function test_compound_reverts_if_precompile_fails() public {
+        // Add node
+        vm.startPrank(ADMIN);
+        uint64 nodeId1 = 1;
+        stakedMonad.addNode(nodeId1);
+
+        uint64[] memory nodeIds = new uint64[](1);
+        nodeIds[0] = nodeId1;
+
+        // Attempt to compound but precompile (claim rewards) fails
+        StakerFaker.mockClaimRewards(nodeId1, false);
+        vm.expectRevert(StakerUpgradeable.PrecompileCallFailed.selector);
+        stakedMonad.compound(nodeIds);
     }
 
     function test_compound_reverts_when_no_rewards() public {

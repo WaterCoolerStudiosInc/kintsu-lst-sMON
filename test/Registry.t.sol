@@ -362,6 +362,16 @@ contract RegistryTest is Test, StakerFaker {
         stakedMonad.removeNode(nodeId);
     }
 
+    function test_removeNode_must_exist() public {
+        // Add node id 1
+        vm.startPrank(ADMIN);
+        stakedMonad.addNode(1);
+
+        // Attempt to remove node id 2 (never added)
+        vm.expectRevert(CustomErrors.InvalidNode.selector);
+        stakedMonad.removeNode(2);
+    }
+
     function test_removeNode_must_have_no_pending_undelegations() public {
         uint64 nodeId = 1;
         vm.startPrank(ADMIN);
@@ -384,6 +394,32 @@ contract RegistryTest is Test, StakerFaker {
         StakerFaker.mockGetEpoch(2, false);
         StakerFaker.mockUndelegate(nodeId, withdrawBatch, 0, true);
         stakedMonad.submitBatch();  // Batch #2
+
+        vm.expectRevert(CustomErrors.PendingWithdrawals.selector);
+        stakedMonad.removeNode(nodeId);
+    }
+
+    function test_removeNode_must_have_no_pending_forced_undelegations() public {
+        uint64 nodeId = 1;
+        vm.startPrank(ADMIN);
+        stakedMonad.addNode(nodeId);
+
+        // Increase weight to 100e18
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100e18, isIncreasing: true });
+        stakedMonad.updateWeights(weightDeltas);
+
+        // Stake 1 MON
+        stakedMonad.deposit{value: 1 ether}(0, ADMIN);
+        StakerFaker.mockGetEpoch(1, false);
+        StakerFaker.mockDelegate(nodeId, true);
+        stakedMonad.submitBatch(); // Batch #1
+
+        // Disable node and begin force unbond
+        stakedMonad.disableNode(nodeId);
+        StakerFaker.mockGetEpoch(2, false);
+        StakerFaker.mockUndelegate(nodeId, 1 ether, 255, true);
+        stakedMonad.unbondDisableNode(nodeId);
 
         vm.expectRevert(CustomErrors.PendingWithdrawals.selector);
         stakedMonad.removeNode(nodeId);
