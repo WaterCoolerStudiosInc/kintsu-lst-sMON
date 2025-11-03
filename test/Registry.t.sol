@@ -284,7 +284,7 @@ contract RegistryTest is Test, StakerFaker {
         Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
         weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100e18, isIncreasing: true });
 
-        vm.expectRevert(CustomErrors.ActiveNode.selector);
+        vm.expectRevert(CustomErrors.DisabledNode.selector);
         stakedMonad.updateWeights(weightDeltas);
     }
 

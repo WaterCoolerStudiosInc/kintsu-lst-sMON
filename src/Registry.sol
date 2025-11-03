@@ -110,7 +110,7 @@ abstract contract Registry is CustomErrors {
         for (uint256 i; i < len; ++i) {
             if (weightDeltas[i].isIncreasing) {
                 Node storage node = getNodeByNodeId(weightDeltas[i].nodeId);
-                if (isNodeDisabled[node.id]) revert ActiveNode();
+                if (isNodeDisabled[node.id]) revert DisabledNode();
                 uint96 oldWeight = node.weight;
                 uint96 newWeight = oldWeight + weightDeltas[i].delta;
 

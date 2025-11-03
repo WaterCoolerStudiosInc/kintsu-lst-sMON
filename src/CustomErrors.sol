@@ -19,6 +19,9 @@ interface CustomErrors {
     /// @notice Thrown when deposit amount exceeds uint96 maximum value
     error DepositOverflow();
 
+    /// @notice Thrown when trying to interact with a node that is disabled
+    error DisabledNode();
+
     /// @notice Thrown when trying to duplicate a currently existing node
     error DuplicateNode();
 
