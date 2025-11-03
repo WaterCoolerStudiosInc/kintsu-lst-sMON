@@ -1181,10 +1181,10 @@ contract StakedMonadTest is Test, StakerFaker {
         weightDeltas[1] = Registry.WeightDelta({nodeId: nodeId2, delta: 400e18, isIncreasing: true});
         stakedMonad.updateWeights(weightDeltas);
 
-        (,,, uint96[] memory underAllocations) = stakedMonad.getImbalances(depositAmount);
+        (,,, uint96[] memory nodeDeficits) = stakedMonad.calculateStakeDeltas(depositAmount);
 
-        assertEq(underAllocations[0], depositAmount * 60 / 100, "Node #1 should have 60% of the under allocation");
-        assertEq(underAllocations[1], depositAmount * 40 / 100, "Node #2 should have 40% of the under allocation");
+        assertEq(nodeDeficits[0], depositAmount * 60 / 100, "Node #1 should have 60% of the deficit");
+        assertEq(nodeDeficits[1], depositAmount * 40 / 100, "Node #2 should have 40% of the deficit");
     }
 
     function test_weightImbalance_over_allocation(uint96 depositAmount) public {
@@ -1224,10 +1224,10 @@ contract StakedMonadTest is Test, StakerFaker {
         weightDeltas2[0] = Registry.WeightDelta({nodeId: nodeId1, delta: 200e18, isIncreasing: false});
         stakedMonad.updateWeights(weightDeltas2);
 
-        (,, uint96[] memory overAllocations, uint96[] memory underAllocations) = stakedMonad.getImbalances(depositAmount);
-        assertApproxEqAbs(overAllocations[0], depositAmount * 10 / 100, 1e4, "Node #1 should have 10% of the over allocation");
-        assertEq(underAllocations[0], 0, "Node #1 should have 0% of the under allocation");
-        assertEq(overAllocations[1], 0, "Node #2 should have 0% of the over allocation");
-        assertApproxEqAbs(underAllocations[1], depositAmount * 10 / 100, 1e4, "Node #2 should have 10% of the under allocation");
+        (,, uint96[] memory nodeExcesses, uint96[] memory nodeDeficits) = stakedMonad.calculateStakeDeltas(depositAmount);
+        assertApproxEqAbs(nodeExcesses[0], depositAmount * 10 / 100, 1e4, "Node #1 should have 10% of the excess");
+        assertEq(nodeDeficits[0], 0, "Node #1 should have 0% of the deficit");
+        assertEq(nodeExcesses[1], 0, "Node #2 should have 0% of the excess");
+        assertApproxEqAbs(nodeDeficits[1], depositAmount * 10 / 100, 1e4, "Node #2 should have 10% of the deficit");
     }
 }

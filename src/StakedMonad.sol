@@ -233,13 +233,13 @@ contract StakedMonad is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeab
         }
     }
 
-    function getImbalances(uint96 newTotalStaked) external view returns (
-        uint96 overAllocation,
-        uint96 underAllocation,
-        uint96[] memory overAllocations,
-        uint96[] memory underAllocations
+    function calculateStakeDeltas(uint96 newTotalStaked) external view returns (
+        uint96 totalExcess,
+        uint96 totalDeficit,
+        uint96[] memory nodeExcesses,
+        uint96[] memory nodeDeficits
     ) {
-        return _getImbalances(Registry.nodes, newTotalStaked);
+        return _calculateStakeDeltas(Registry.nodes, newTotalStaked);
     }
 
     /**
@@ -605,40 +605,40 @@ contract StakedMonad is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeab
 
     /**
      * @dev Calculates differences between current staked amounts and optimal staked amounts
-     * @return overAllocation - Total over allocations of all nodes; zero indicates no over-allocations
-     * @return underAllocation - Total under allocations of all nodes; zero indicates no under-allocations
-     * @return overAllocations - Over allocation (if any) for each node; zero indicates equilibrium or under-allocation
-     * @return underAllocations - Under allocation (if any) for each node; zero indicates equilibrium or over-allocation
+     * @return totalExcess - Total excess stake of all nodes; zero indicates no excess
+     * @return totalDeficit - Total deficit stake of all nodes; zero indicates no deficit
+     * @return nodeExcesses - Excess stake (if any) for each node; zero indicates equilibrium or deficit
+     * @return nodeDeficits - Deficit stake (if any) for each node; zero indicates equilibrium or excess
      */
-    function _getImbalances(
+    function _calculateStakeDeltas(
         Node[] memory nodes,
-        uint256 newTotalStaked
+        uint256 targetTotalStaked
     ) private view returns (
-        uint96 overAllocation,
-        uint96 underAllocation,
-        uint96[] memory overAllocations,
-        uint96[] memory underAllocations
+        uint96 totalExcess,
+        uint96 totalDeficit,
+        uint96[] memory nodeExcesses,
+        uint96[] memory nodeDeficits
     ) {
         uint256 _totalWeight = Registry.totalWeight; // shadow
 
         uint256 len = nodes.length;
-        overAllocations = new uint96[](len);
-        underAllocations = new uint96[](len);
+        nodeExcesses = new uint96[](len);
+        nodeDeficits = new uint96[](len);
 
         for (uint256 i; i < len; ++i) {
             uint256 stakedAmountCurrent = nodes[i].staked;
-            uint256 stakedAmountOptimal = _totalWeight > 0 ? uint256(nodes[i].weight) * newTotalStaked / _totalWeight : 0;
+            uint256 stakedAmountOptimal = _totalWeight > 0 ? targetTotalStaked * uint256(nodes[i].weight) / _totalWeight : 0;
 
             if (stakedAmountCurrent > stakedAmountOptimal) {
-                // Over allocation
+                // Excess / Over allocation
                 uint256 diff = stakedAmountCurrent - stakedAmountOptimal;
-                overAllocation += uint96(diff);
-                overAllocations[i] = uint96(diff);
+                totalExcess += uint96(diff);
+                nodeExcesses[i] = uint96(diff);
             } else if (stakedAmountOptimal > stakedAmountCurrent) {
-                // Under allocation
+                // Deficit / Under allocation
                 uint256 diff = stakedAmountOptimal - stakedAmountCurrent;
-                underAllocation += uint96(diff);
-                underAllocations[i] = uint96(diff);
+                totalDeficit += uint96(diff);
+                nodeDeficits[i] = uint96(diff);
             }
         }
     }
@@ -659,34 +659,16 @@ contract StakedMonad is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeab
         if (_totalWeight == 0) revert ZeroTotalWeight();
 
         Node[] memory _nodes = Registry.nodes; // shadow (SLOAD n-nodes slots)
-        (, uint96 underAllocation,, uint96[] memory underAllocations) = _getImbalances(
+        (, uint96 totalDeficit,, uint96[] memory nodeDeficits) = _calculateStakeDeltas(
             _nodes,
             _totalPooled - batchWithdrawals // derived newTotalStaked
         );
 
         uint256 requestedBonding = batchDeposits - batchWithdrawals;
 
-        // Amount to distribute to under-allocated nodes
-        uint256 phase1 = requestedBonding < underAllocation ? requestedBonding : underAllocation;
-
-        // Remaining amount to distribute equitably to all nodes
-        uint256 phase2 = requestedBonding - phase1;
-
         uint256 n = _nodes.length;
         for (uint256 i; i < n; ++i) {
-            // Phase 1: Prioritize under-allocated nodes
-            // Distribute proportionally based on how much each node is under their target
-            uint256 phase1Amount = underAllocations[i] > 0
-                ? phase1 * underAllocations[i] / underAllocation
-                : 0;
-
-            // Phase 2: Distribute remaining funds equitably
-            // Allocate based on each node's relative weight in the network
-            uint256 phase2Amount = phase2 > 0
-                ? phase2 * _nodes[i].weight / _totalWeight
-                : 0;
-
-            uint96 bondAmount = uint96(phase1Amount + phase2Amount);
+            uint96 bondAmount = uint96(requestedBonding * nodeDeficits[i] / totalDeficit);
 
             if (bondAmount > 0) {
                 Registry.nodes[i].staked = _nodes[i].staked + bondAmount;
@@ -709,31 +691,16 @@ contract StakedMonad is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeab
      */
     function _doUnbonding(uint96 batchWithdrawals, uint96 batchDeposits, uint96 _totalPooled) private returns (uint96 actualUnbonding) {
         Node[] memory _nodes = Registry.nodes; // shadow (SLOAD n-nodes slots)
-        (uint96 overAllocation,, uint96[] memory overAllocations,) = _getImbalances(
+        (uint96 totalExcess,, uint96[] memory nodeExcesses,) = _calculateStakeDeltas(
             _nodes,
             _totalPooled - batchWithdrawals // derived newTotalStaked
         );
 
         uint256 requestedUnbonding = batchWithdrawals - batchDeposits;
 
-        // Amount to withdraw from over-allocated nodes
-        uint256 phase1 = requestedUnbonding < overAllocation ? requestedUnbonding : overAllocation;
-
-        // Remaining amount to withdraw equitably from all nodes
-        uint256 phase2 = requestedUnbonding - phase1;
-
-        // `totalStaked` - `phase1`
-        uint256 totalStakedAfterPhase1 = (totalPooled - batchDeposits) - phase1;
-
         uint256 n = _nodes.length;
         for (uint256 i; i < n; ++i) {
-            // Phase 1: Unbond proportionally from over-allocated nodes only
-            uint256 phase1Amount = overAllocations[i] > 0 ? phase1 * overAllocations[i] / overAllocation : 0;
-
-            // Phase 2: Unbond remaining amount proportionally from all nodes based on remaining stake
-            uint256 phase2Amount = phase2 > 0 ? phase2 * (_nodes[i].staked - phase1Amount) / totalStakedAfterPhase1 : 0;
-
-            uint96 unbondAmount = uint96(phase1Amount + phase2Amount);
+            uint96 unbondAmount = uint96(requestedUnbonding * nodeExcesses[i] / totalExcess);
 
             if (unbondAmount > 0) {
                 Registry.nodes[i].staked = _nodes[i].staked - unbondAmount;
