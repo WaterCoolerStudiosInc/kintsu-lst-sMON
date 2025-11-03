@@ -227,7 +227,7 @@ contract StakedMonad is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeab
 
         uint256 time = block.timestamp - _managementFee.lastUpdate;
         if (time > 0) {
-            uint256 feeShares = (ERC20Upgradeable.totalSupply() + shares) * _managementFee.bips / BIPS;
+            uint256 feeShares = _calculateFee(ERC20Upgradeable.totalSupply() + shares, _managementFee.bips);
             uint256 feeSharesTimeWeighted = feeShares * time / YEAR;
             shares += uint96(feeSharesTimeWeighted);
         }
@@ -279,7 +279,7 @@ contract StakedMonad is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeab
         uint96 sharesToFee;
         if (!isExitFeeExempt[msg.sender]) {
             exitFeeInBips = exitFee.bips;
-            sharesToFee = uint96(uint256(shares) * exitFeeInBips / BIPS);
+            sharesToFee = _calculateFee(shares, exitFeeInBips);
         }
 
         uint96 sharesToUnlock = shares - sharesToFee;
@@ -334,7 +334,7 @@ contract StakedMonad is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeab
         if (userUnlockRequest.batchId != currentBatchId) revert CancellationWindowClosed();
 
         // Re-calculate the shares breakdown used during `requestUnlock()`
-        uint96 sharesToFee = uint96(uint256(userUnlockRequest.shares) * userUnlockRequest.exitFeeInBips / BIPS);
+        uint96 sharesToFee = _calculateFee(userUnlockRequest.shares, userUnlockRequest.exitFeeInBips);
         uint96 sharesToUnlock = userUnlockRequest.shares - sharesToFee;
 
         // Remove shares from current batch unlock request
@@ -603,6 +603,15 @@ contract StakedMonad is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeab
         activityEpoch = in_epoch_delay_period ? currentEpoch + 2 : currentEpoch + 1;
     }
 
+    /*
+     * @dev Applies a bips fee and rounds up
+     * @dev When `feeInBips` is zero, returned fee will also be zero
+     * @dev When `feeInBips` is non-zero, returned fee will always be non-zero
+     */
+    function _calculateFee(uint256 amount, uint256 feeInBips) private pure returns (uint96) {
+        return uint96((amount * feeInBips + (BIPS - 1)) / BIPS); // round up
+    }
+
     /**
      * @dev Calculates differences between current staked amounts and optimal staked amounts
      * @return totalExcess - Total excess stake of all nodes; zero indicates no excess
@@ -734,7 +743,7 @@ contract StakedMonad is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeab
         ManagementFee memory _managementFee = managementFee; // shadow (SLOAD 1 slot)
         uint256 time = block.timestamp - _managementFee.lastUpdate;
         if (time > 0) {
-            uint256 feeShares = (ERC20Upgradeable.totalSupply() + _managementFee.virtualSharesSnapshot) * _managementFee.bips / BIPS;
+            uint256 feeShares = _calculateFee(ERC20Upgradeable.totalSupply() + _managementFee.virtualSharesSnapshot, _managementFee.bips);
             uint256 feeSharesTimeWeighted = feeShares * time / YEAR;
             _managementFee.virtualSharesSnapshot = uint96(_managementFee.virtualSharesSnapshot + feeSharesTimeWeighted);
             _managementFee.lastUpdate = uint40(block.timestamp);

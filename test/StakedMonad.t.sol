@@ -107,7 +107,7 @@ contract StakedMonadTest is Test, StakerFaker {
         vm.warp(vm.getBlockTimestamp() + 365 days);
 
         // Initial management fee applied over one year
-        uint256 protocolShares = sharesAlice * 2_00 / BIPS;
+        uint256 protocolShares = (sharesAlice * 2_00 + (BIPS - 1)) / BIPS;
         assertEq(stakedMonad.getMintableProtocolShares(), protocolShares);
         assertEq(stakedMonad.totalShares(), sharesAlice + protocolShares);
     }
@@ -146,7 +146,7 @@ contract StakedMonadTest is Test, StakerFaker {
         vm.warp(vm.getBlockTimestamp() + 365 days);
 
         // Initial management fee applied over one year
-        uint256 protocolShares = sharesAlice * 2_00 / BIPS;
+        uint256 protocolShares = (sharesAlice * 2_00 + (BIPS - 1)) / BIPS;
         assertEq(stakedMonad.getMintableProtocolShares(), protocolShares);
         assertEq(stakedMonad.totalShares(), sharesAlice + protocolShares);
     }
@@ -548,6 +548,90 @@ contract StakedMonadTest is Test, StakerFaker {
         stakedMonad.claimProtocolFees(BOB);
     }
 
+    function test_claimProtocolFees_with_no_fees() public {
+        // Add 1 node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Set all fees to 0%
+        stakedMonad.setManagementFee(0);
+        stakedMonad.setExitFee(0);
+
+        // Generate fees on 100 MON for 1 year
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+        stakedMonad.deposit{value: 100 ether}(0, ADMIN);
+        vm.warp(vm.getBlockTimestamp() + 365 days);
+
+        // Generate exit fees by unlocking 10 shares
+        stakedMonad.requestUnlock(10e18, 0);
+        StakerFaker.mockGetEpoch(1, true);
+        StakerFaker.mockDelegate(nodeId, true);
+        stakedMonad.submitBatch();
+
+        // Claim protocol fees
+        uint256 sharesBeforeClaim = stakedMonad.balanceOf(BOB);
+        stakedMonad.claimProtocolFees(BOB);
+        uint256 sharesClaimed = stakedMonad.balanceOf(BOB) - sharesBeforeClaim;
+
+        assertEq(sharesClaimed, 0, "Zero fees should generate no protocol fees");
+    }
+
+    function test_claimProtocolFees_management_fee_rounds_up() public {
+        assertEq(stakedMonad.getManagementFeeBips(), 2_00, "Management fee should be 2.00%");
+
+        // Add 1 node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Generate fees on 49 wei MON over 1 year
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+        stakedMonad.deposit{value: 49 wei}(0, ADMIN);
+        vm.warp(vm.getBlockTimestamp() + 365 days);
+
+        // Claim protocol fees triggering a mint
+        uint256 sharesBeforeClaim = stakedMonad.balanceOf(BOB);
+        stakedMonad.claimProtocolFees(BOB);
+        uint256 sharesClaimed = stakedMonad.balanceOf(BOB) - sharesBeforeClaim;
+
+        // 2% on 49 wei is ~0.99
+        assertEq(sharesClaimed, 1, "Should earn some fees");
+    }
+
+    function test_claimProtocolFees_exit_fee_rounds_up() public {
+        assertEq(stakedMonad.getExitFeeBips(), 5, "Exit fee should be 0.05%");
+
+        // Add 1 node
+        vm.startPrank(ADMIN);
+        uint64 nodeId = 1;
+        stakedMonad.addNode(nodeId);
+
+        // Deposit 100 MON
+        Registry.WeightDelta[] memory weightDeltas = new Registry.WeightDelta[](1);
+        weightDeltas[0] = Registry.WeightDelta({nodeId: nodeId, delta: 100, isIncreasing: true});
+        stakedMonad.updateWeights(weightDeltas);
+        stakedMonad.deposit{value: 100 ether}(0, ADMIN);
+
+        // Generate exit fees by immediately unlocking 1999 wei shares
+        stakedMonad.requestUnlock(1999 wei, 0);
+        StakerFaker.mockGetEpoch(1, true);
+        StakerFaker.mockDelegate(nodeId, true);
+        stakedMonad.submitBatch();
+
+        // Claim protocol fees triggering a mint
+        uint256 sharesBeforeClaim = stakedMonad.balanceOf(BOB);
+        stakedMonad.claimProtocolFees(BOB);
+        uint256 sharesClaimed = stakedMonad.balanceOf(BOB) - sharesBeforeClaim;
+
+        // 0.05% on 1999 wei is ~0.99
+        assertEq(sharesClaimed, 1, "Should earn some fees");
+    }
+
     function test_claimProtocolFees_with_management_fee() public {
         assertEq(stakedMonad.getManagementFeeBips(), 2_00, "Management fee should be 2.00%");
 
@@ -586,14 +670,14 @@ contract StakedMonadTest is Test, StakerFaker {
         stakedMonad.updateWeights(weightDeltas);
         stakedMonad.deposit{value: 100 ether}(0, ADMIN);
         vm.warp(vm.getBlockTimestamp() + 365 days);
-        uint96 managementFeeShares = 100e18 * 2_00 / BIPS;
+        uint96 managementFeeShares = (100e18 * 2_00 + (BIPS - 1)) / BIPS;
 
         // Generate exit fees by unlocking 10 shares
         stakedMonad.requestUnlock(10e18, 0);
         StakerFaker.mockGetEpoch(1, true);
         StakerFaker.mockDelegate(nodeId, true);
         stakedMonad.submitBatch();
-        uint96 exitFeeShares = 10e18 * 5 / BIPS;
+        uint96 exitFeeShares = (10e18 * 5 + (BIPS - 1)) / BIPS;
 
         // Claim protocol fees triggering a mint
         uint256 sharesBeforeClaim = stakedMonad.balanceOf(BOB);
