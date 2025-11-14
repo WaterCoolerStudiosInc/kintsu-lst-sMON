@@ -1,5 +1,5 @@
 {
-  "version": "0.0.1",
+  "version": "1.0.0",
   "name": "@water-cooler-studios/monad-contracts-core",
   "description": "Smart contracts and deployments for Monad",
   "type": "module",
@@ -7,7 +7,6 @@
     "anvil": "anvil --code-size-limit 128000"
   },
   "files": [
-    "out/KintsuBetaERC1155.sol/*",
     "out/StakedMonad.sol/*",
     "!out/*/31337_deployment.json"
   ]

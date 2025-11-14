@@ -19,6 +19,5 @@ broadcast/
 # Publishing
 # This should mirror the `files` from package.json
 out/*/*
-!out/KintsuBetaERC1155.sol/*
 !out/StakedMonad.sol/*
 out/*/31337*.json
