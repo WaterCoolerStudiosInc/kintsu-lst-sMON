@@ -69,6 +69,10 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
     event FeesWithdrawn(uint256 managementFeeShares, uint256 exitFeeShares);
     event ManagementFeeAdjusted(uint256 newFee);
     event ExitFeeAdjusted(uint256 newFee);
+    event Deposit(address indexed staker, uint256 shares, uint256 value);
+    event BatchSent(uint256 batchId, uint256 sharesBurnt, uint256 unstakeValue);
+    event Compounded(uint256 indexed nodeId, uint256 amount);
+    event VirtualSharesSnapshot(uint256 shares);
 
     // Registry related roles
     bytes32 public constant ROLE_ADD_NODE = keccak256("ROLE_ADD_NODE");
@@ -156,6 +160,10 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
             lastUpdate: uint40(block.timestamp)
         });
         exitFee.bips = 5; // initial fee of 0.05%
+    }
+
+    function initializeFromV1() external reinitializer(2) {
+        if (Initializable._getInitializedVersion() != 1) revert("Expected version 1");
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(ROLE_UPGRADE) {}
@@ -263,6 +271,8 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
         totalPooled += uint96(msg.value);
 
         batchDepositRequests[currentBatchId].assets += uint96(msg.value);
+
+        emit Deposit(receiver, shares, msg.value);
     }
 
     /*
@@ -411,6 +421,7 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
         Batch memory batchDepositRequest = batchDepositRequests[_currentBatchId];
         Batch memory batchWithdrawRequest = batchWithdrawRequests[_currentBatchId];
 
+        uint96 dustEgress;
         if (batchDepositRequest.assets > batchWithdrawRequest.assets) {
             // Net ingress
             uint96 bondedAmountEvm = _doBonding(batchDepositRequest.assets, batchWithdrawRequest.assets, _totalPooled);
@@ -422,10 +433,10 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
         } else if (batchWithdrawRequest.assets > batchDepositRequest.assets) {
             // Net egress
             uint96 unbondedAmountEvm = _doUnbonding(batchWithdrawRequest.assets, batchDepositRequest.assets, _totalPooled);
-            uint96 dust = batchWithdrawRequest.assets - batchDepositRequest.assets - unbondedAmountEvm;
-            if (dust > 0) {
-                batchWithdrawRequests[_currentBatchId + 1].assets = dust;
-                _totalPooled += dust;
+            dustEgress = batchWithdrawRequest.assets - batchDepositRequest.assets - unbondedAmountEvm;
+            if (dustEgress > 0) {
+                batchWithdrawRequests[_currentBatchId + 1].assets = dustEgress;
+                _totalPooled += dustEgress;
             }
             batchSubmission.activationEpoch = activityEpoch;
         } else {
@@ -458,6 +469,8 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
 
         // Increment batch id
         currentBatchId = _currentBatchId + 1;
+
+        emit BatchSent(_currentBatchId, batchWithdrawRequest.shares, batchWithdrawRequest.assets - dustEgress);
     }
 
     /**
@@ -519,14 +532,19 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
      * @dev Specifying an invalid node id will revert
      */
     function compound(uint64[] memory nodeIds) external whenNotPaused {
-        uint256 balanceBefore = address(this).balance;
+        uint256 claimedRewards;
+        uint256 balanceSnapshot = address(this).balance;
 
         uint256 len = nodeIds.length;
         for (uint64 i; i < len; ++i) {
             StakerUpgradeable.claimRewards(nodeIds[i]);
+            uint256 nodeRewards = address(this).balance - balanceSnapshot - claimedRewards;
+            if (nodeRewards > 0) {
+                claimedRewards += nodeRewards;
+                emit Compounded(nodeIds[i], nodeRewards);
+            }
         }
 
-        uint256 claimedRewards = address(this).balance - balanceBefore;
         if (claimedRewards == 0) revert NoChange();
 
         totalPooled += uint96(claimedRewards);
@@ -748,6 +766,8 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
             _managementFee.virtualSharesSnapshot = uint96(_managementFee.virtualSharesSnapshot + feeSharesTimeWeighted);
             _managementFee.lastUpdate = uint40(block.timestamp);
             managementFee = _managementFee;
+
+            emit VirtualSharesSnapshot(_managementFee.virtualSharesSnapshot);
         }
     }
 }
