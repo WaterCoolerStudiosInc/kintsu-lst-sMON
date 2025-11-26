@@ -10,43 +10,41 @@ import "../src/StakedMonadV2.sol";
  *     - PRIVATE_KEY - Deploying address private key
  * @custom:example forge script UpgradeCoreV2FromV1
  */
-contract UpgradeCoreV2FromV1 is Script {
-    function run() external {
+contract UpgradeV2FromV1 is Script {
+    function run() external virtual {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         console.log("Wallet: %s", vm.addr(deployerPrivateKey));
 
         vm.startBroadcast(deployerPrivateKey);
-
-        // Deploy new implementation
-        address newImplementation = address(new StakedMonadV2());
-        console.log("StakedMonadV2 implementation deployed to: %s", address(newImplementation));
-
-        require(newImplementation.code.length > 0, "Invalid StakedMonadV2 implementation");
-        console.log("Using new StakedMonadV2 implementation: %s", newImplementation);
-
-        // Upgrade current proxy
-        address currentProxyAddress = getDeploymentAddress("StakedMonad");
-        UUPSUpgradeable currentProxy = UUPSUpgradeable(currentProxyAddress);
-        console.log("Upgrading proxy found at: %s", currentProxyAddress);
-
-        currentProxy.upgradeToAndCall(
-            newImplementation,
-            abi.encodeCall(StakedMonadV2.initializeFromV1, ())
-        );
-
+        address proxy = getDeploymentAddress("StakedMonad");
+        (address impl) = upgradeV2FromV1(proxy);
         vm.stopBroadcast();
+
+        console.log("StakedMonadV2 implementation deployed to: %s", impl);
+        console.log("ERC1967Proxy (StakedMonadV2) upgraded at: %s", proxy);
 
         // Update `abiSource` with new contract name for future versions
         upgradeArtifacts("StakedMonad", "StakedMonadV2");
     }
 
-    function getDeploymentAddress(string memory contractName) internal view returns (address) {
+    function upgradeV2FromV1(address proxy) public returns (address impl) {
+        // Deploy new implementation
+        impl = address(new StakedMonadV2());
+
+        // Upgrade current proxy
+        UUPSUpgradeable(proxy).upgradeToAndCall(
+            impl,
+            abi.encodeCall(StakedMonadV2.initializeFromV1, ())
+        );
+    }
+
+    function getDeploymentAddress(string memory contractName) private view returns (address) {
         string memory path = string(abi.encodePacked("./out/", contractName, ".sol/", vm.toString(block.chainid), "_", "deployment.json"));
         string memory json = vm.readFile(path);
         return vm.parseJsonAddress(json, "$.address");
     }
 
-    function upgradeArtifacts(string memory artifactName, string memory abiSource) internal {
+    function upgradeArtifacts(string memory artifactName, string memory abiSource) private {
         if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) return;
 
         string memory abiInput = string(abi.encodePacked("./out/", abiSource, ".sol/", abiSource, ".json"));
