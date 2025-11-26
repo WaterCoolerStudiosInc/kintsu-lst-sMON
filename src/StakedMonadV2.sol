@@ -16,6 +16,10 @@ import "./Registry.sol";
  *         Manages the lifecycle of staking, un-staking, and rewards distribution
  *         Facilitates batch processing of deposits and withdrawals
  *         Dynamically adjusts bonding/unbonding node allocation based on Registry weights
+ *
+ *         Changes in v2:
+ *           * Added Deposit, BatchSent, Compounded, and VirtualSharesSnapshot events
+ *           * Modified function logic of deposit, submitBatch, compound, and _updateFees to include above events
  */
 contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeable, ERC20Upgradeable, AccessControlUpgradeable, PausableUpgradeable {
     uint16 private constant BIPS = 100_00;
@@ -127,7 +131,7 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
      *      3) Some dust is still pending undelegation
      *      4) All unlock requests are redeemed
      */
-    function initialize(address admin) external payable initializer {
+    function initialize(address admin) external payable reinitializer(2) {
         UUPSUpgradeable.__UUPSUpgradeable_init();
         StakerUpgradeable.__Staker_init();
         ERC20Upgradeable.__ERC20_init("Kintsu Staked Monad", "sMON");
