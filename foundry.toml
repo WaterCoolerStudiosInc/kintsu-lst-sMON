@@ -16,6 +16,9 @@ eth_rpc_url = "https://testnet-rpc.monad.xyz"
 [profile.tn2]
 eth_rpc_url = "https://rpc-testnet-2.monadinfra.com"
 
+[profile.mainnet]
+eth_rpc_url = "https://rpc-mainnet.monadinfra.com"
+
 [dependencies]
 "forge-std" = "1.10.0"
 "@openzeppelin-contracts" = "5.4.0"
@@ -25,3 +28,4 @@ eth_rpc_url = "https://rpc-testnet-2.monadinfra.com"
 anvil = "http://localhost:8545"
 monad_testnet = "https://testnet-rpc.monad.xyz"
 monad_testnet2 = "https://rpc-testnet-2.monadinfra.com"
+monad_mainnet = "https://rpc-mainnet.monadinfra.com"
