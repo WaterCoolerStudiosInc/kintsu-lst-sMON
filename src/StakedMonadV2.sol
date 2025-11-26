@@ -111,6 +111,11 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
     // Allow receiving funds via sweep()
     receive() external payable {}
 
+    modifier expectInitializedVersion(uint64 version) {
+        if (Initializable._getInitializedVersion() != version) revert("Expected a different version");
+        _;
+    }
+
     constructor() {
         Initializable._disableInitializers();
     }
@@ -162,9 +167,7 @@ contract StakedMonadV2 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
         exitFee.bips = 5; // initial fee of 0.05%
     }
 
-    function initializeFromV1() external reinitializer(2) {
-        if (Initializable._getInitializedVersion() != 1) revert("Expected version 1");
-    }
+    function initializeFromV1() external expectInitializedVersion(1) reinitializer(2) {}
 
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(ROLE_UPGRADE) {}
 

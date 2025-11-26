@@ -19,7 +19,7 @@ contract StakedMonadTest is Test, StakerFaker {
     uint16 public constant BIPS = 100_00;
     uint8 public constant WITHDRAW_DELAY_EPOCHS = 7;
 
-    function setUp() public {
+    function setUp() public virtual {
         vm.label(ADMIN, "//ADMIN");
         vm.label(ALICE, "//Alice");
         vm.label(BOB, "//Bob");
