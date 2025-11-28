@@ -5,8 +5,9 @@ import {Test, stdError, console} from "forge-std/src/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {StakedMonad, Registry, StakerUpgradeable, CustomErrors, PausableUpgradeable, IAccessControl} from "../src/StakedMonad.sol";
 import {StakerFaker} from "./StakerFaker.sol";
+import {DeployV1} from "../script/DeployV1.s.sol";
 
-contract StakedMonadTest is Test, StakerFaker {
+contract StakedMonadTest is Test, DeployV1, StakerFaker {
     StakedMonad public stakedMonad;
 
     address payable public ADMIN = payable(vm.addr(100));
@@ -19,7 +20,7 @@ contract StakedMonadTest is Test, StakerFaker {
     uint16 public constant BIPS = 100_00;
     uint8 public constant WITHDRAW_DELAY_EPOCHS = 7;
 
-    function setUp() public {
+    function setUp() public virtual {
         vm.label(ADMIN, "//ADMIN");
         vm.label(ALICE, "//Alice");
         vm.label(BOB, "//Bob");
@@ -30,12 +31,9 @@ contract StakedMonadTest is Test, StakerFaker {
         vm.deal(BOB, FUNDING_AMOUNT);
         vm.deal(CHARLIE, FUNDING_AMOUNT);
 
-        StakedMonad stakedMonadImpl = new StakedMonad();
-        ERC1967Proxy stakedMonadProxy = new ERC1967Proxy{value: 0.01 ether}(
-            address(stakedMonadImpl),
-            abi.encodeCall(StakedMonad.initialize, (ADMIN))
-        );
-        stakedMonad = StakedMonad(payable(stakedMonadProxy));
+        (address proxy,) = DeployV1.deployV1(ADMIN);
+
+        stakedMonad = StakedMonad(payable(proxy));
     }
 
     function test_roles_self_managed() public {

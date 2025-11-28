@@ -10,31 +10,34 @@ import "../src/StakedMonad.sol";
  * @dev These environment variables must be set:
  *     - PRIVATE_KEY - Private key of the deploying account
  */
-contract DeployCore is Script {
-    function run() external {
+contract DeployV1 is Script {
+    function run() external virtual {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         console.log("Deployer: %s", deployer);
 
         vm.startBroadcast(deployerPrivateKey);
-
-        // Deploy implementation
-        StakedMonad stakedMonadImpl = new StakedMonad();
-        console.log("StakedMonad implementation deployed to: %s", address(stakedMonadImpl));
-
-        // Deploy and initialize proxy
-        ERC1967Proxy stakedMonadProxy = new ERC1967Proxy{value: 0.01 ether}(
-            address(stakedMonadImpl),
-            abi.encodeCall(StakedMonad.initialize, (deployer))
-        );
-        console.log("ERC1967Proxy (StakedMonad) deployed to: %s", address(stakedMonadProxy));
-
+        (address proxy, address impl) = deployV1(deployer);
         vm.stopBroadcast();
 
-        writeArtifacts("StakedMonad", "StakedMonad", address(stakedMonadProxy));
+        console.log("StakedMonad implementation deployed to: %s", impl);
+        console.log("ERC1967Proxy (StakedMonad) deployed to: %s", proxy);
+
+        writeArtifacts("StakedMonad", "StakedMonad", proxy);
     }
 
-    function writeArtifacts(string memory artifactName, string memory abiSource, address deployment) internal {
+    function deployV1(address admin) public returns (address proxy, address impl) {
+        // Deploy implementation
+        impl = address(new StakedMonad());
+
+        // Deploy and initialize proxy
+        proxy = address(new ERC1967Proxy{value: 0.01 ether}(
+            impl,
+            abi.encodeCall(StakedMonad.initialize, (admin))
+        ));
+    }
+
+    function writeArtifacts(string memory artifactName, string memory abiSource, address deployment) internal virtual {
         if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast)) return;
 
         string memory abiInput = string(abi.encodePacked("./out/", abiSource, ".sol/", abiSource, ".json"));
