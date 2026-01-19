@@ -8,6 +8,7 @@
   },
   "files": [
     "out/StakedMonad.sol/*",
+    "out/Splitter.sol/*",
     "!out/*/31337_deployment.json"
   ]
 }

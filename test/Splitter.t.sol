@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/src/Test.sol";
 import {Splitter, SplitterFactory} from "../src/Splitter.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {DeploySplitterFactory} from "../script/DeploySplitterFactory.s.sol";
 
 contract MockTarget {
     uint256 public lastCallValue;
@@ -41,7 +42,7 @@ contract MockTarget {
     }
 }
 
-contract SplitterTest is Test {
+contract SplitterTest is Test, DeploySplitterFactory {
     Splitter public splitter;
     SplitterFactory public factory;
     
@@ -70,7 +71,7 @@ contract SplitterTest is Test {
         vm.label(CHARLIE, "//Charlie");
         
         splitter = new Splitter(ADMIN);
-        factory = new SplitterFactory();
+        factory = SplitterFactory(DeploySplitterFactory.deployFactory());
         
         target1 = new MockTarget();
         target2 = new MockTarget();
