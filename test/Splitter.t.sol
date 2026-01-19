@@ -2,7 +2,8 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/src/Test.sol";
-import {Splitter, SplitterFactory} from "../src/Splitter.sol";
+import {Splitter} from "../src/Splitter.sol";
+import {SplitterFactory} from "../src/SplitterFactory.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {DeploySplitterFactory} from "../script/DeploySplitterFactory.s.sol";
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
@@ -105,18 +106,5 @@ contract Splitter is AccessControl, ReentrancyGuard {
             // No need to check more splits if we have found them all
             if (++splitsApplied >= _splitCount) return;
         }
-    }
-}
-
-
-contract SplitterFactory {
-    event SplitterCreated(address splitter);
-
-    constructor() {}
-
-    function create(address splitterAdmin) external returns (address) {
-        Splitter newSplitter = new Splitter(splitterAdmin);
-        emit SplitterCreated(address(newSplitter));
-        return address(newSplitter);
     }
 }
