@@ -17,7 +17,7 @@ contract DeploySplitterFactory is Script {
 
         vm.startBroadcast(deployerPrivateKey);
         address splitterFactory = deployFactory();
-        address splitter = SplitterFactory(splitterFactory).create(deployer);
+        address splitter = SplitterFactory(splitterFactory).create(16, deployer);
         vm.stopBroadcast();
 
         console.log("SplitterFactory deployed to: %s", splitterFactory);

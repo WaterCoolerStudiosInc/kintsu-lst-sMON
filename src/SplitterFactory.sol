@@ -8,8 +8,8 @@ contract SplitterFactory {
 
     constructor() {}
 
-    function create(address splitterAdmin) external returns (address) {
-        Splitter newSplitter = new Splitter(splitterAdmin);
+    function create(uint256 maxSplits, address splitterAdmin) external returns (address) {
+        Splitter newSplitter = new Splitter(maxSplits, splitterAdmin);
         emit SplitterCreated(address(newSplitter));
         return address(newSplitter);
     }

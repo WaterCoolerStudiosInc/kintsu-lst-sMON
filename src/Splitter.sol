@@ -4,12 +4,22 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
+/**
+ * @title Splitter
+ * @notice Distributes received MON to multiple targets based on configurable percentage allocations
+ * @dev Uses basis points (bips) for percentage calculations where 10000 bips = 100%
+ */
 contract Splitter is AccessControl, ReentrancyGuard {
 
     uint16 private constant BIPS = 10000;
-    uint256 private constant MAX_SPLITS = 10;
     uint256 private bipsTotal;
 
+    /**
+     * @notice Configuration for a single split recipient
+     * @param bips Percentage allocation in basis points (1 bip = 0.01%)
+     * @param _target Address to receive funds
+     * @param _calldata Optional calldata to execute on the target when withdrawing
+     */
     struct Split {
         uint16 bips;
         address _target;
@@ -25,10 +35,25 @@ contract Splitter is AccessControl, ReentrancyGuard {
     bytes32 public constant ROLE_SPLIT_UPDATE = keccak256("ROLE_SPLIT_UPDATE");
     bytes32 public constant ROLE_SPLIT_DELETE = keccak256("ROLE_SPLIT_DELETE");
 
+    /// @notice Mapping of split index to split configuration
     mapping(uint256 => Split) public splits;
+
+    /// @notice Number of active splits
     uint256 public splitCount;
 
-    constructor(address initialAdmin) {
+    /// @notice Maximum number of splits allowed
+    uint256 public immutable MAX_SPLITS;
+
+    /**
+     * @notice Creates a new Splitter contract
+     * @param maxSplits Maximum number of splits allowed (must be 1-32)
+     * @param initialAdmin Address to receive all admin and split management roles
+     */
+    constructor(uint256 maxSplits, address initialAdmin) {
+        require(maxSplits > 0, "Not enough splits");
+        require(maxSplits <= 32, "Too many splits");
+        MAX_SPLITS = maxSplits;
+
         AccessControl._grantRole(AccessControl.DEFAULT_ADMIN_ROLE, initialAdmin);
         AccessControl._grantRole(ROLE_SPLIT_CREATE, initialAdmin);
         AccessControl._grantRole(ROLE_SPLIT_UPDATE, initialAdmin);
@@ -37,6 +62,41 @@ contract Splitter is AccessControl, ReentrancyGuard {
 
     receive() external payable virtual {}
 
+    /**
+     * @notice Returns all active splits and their indexes
+     * @return indexes Array of indexes where splits are configured
+     * @return activeSplits Array of split configurations
+     */
+    function getActiveSplits() external view returns (uint256[] memory indexes, Split[] memory activeSplits) {
+        indexes = new uint256[](splitCount);
+        activeSplits = new Split[](splitCount);
+        uint256 j;
+        for (uint256 i; i < MAX_SPLITS; ++i) {
+            if (splits[i].bips > 0) {
+                indexes[j] = i;
+                activeSplits[j] = splits[i];
+                ++j;
+            }
+        }
+    }
+
+    /**
+     * @notice Returns the next available split index
+     * @return The first index where no split is configured
+     */
+    function getNextAvailableIndex() external view returns (uint256) {
+        for (uint256 i; i < MAX_SPLITS; ++i) {
+            if (splits[i].bips == 0) return i;
+        }
+        revert("No available index");
+    }
+
+    /**
+     * @notice Creates, updates, or deletes splits in a single transaction
+     * @dev Requires appropriate role for each operation. Total bips must equal 10000 after all changes.
+     * @param splitIndexes Array of split indexes to modify
+     * @param newSplits Array of new split configurations (use bips=0 to delete)
+     */
     function updateSplits(uint256[] memory splitIndexes, Split[] memory newSplits) external nonReentrant {
         uint256 n = splitIndexes.length;
         require(newSplits.length == n, "Mismatched arguments");
@@ -79,6 +139,10 @@ contract Splitter is AccessControl, ReentrancyGuard {
         bipsTotal = _bipsTotal;
     }
 
+    /**
+     * @notice Distributes the contract's MON balance to all configured splits
+     * @dev Each split receives (balance * bips / 10000). Reverts if any transfer fails.
+     */
     function withdraw() external nonReentrant {
         uint256 _balance = address(this).balance;
         uint256 _splitCount = splitCount; // shadow
