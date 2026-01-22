@@ -21,4 +21,5 @@ broadcast/
 out/*/*
 !out/StakedMonad.sol/*
 !out/SplitterFactory.sol/*
+!out/Splitter.sol/Splitter.json
 out/*/31337*.json
