@@ -69,7 +69,7 @@ contract SplitterTest is Test, DeploySplitterFactory {
         vm.label(ALICE, "Alice");
         vm.label(BOB, "Bob");
 
-        splitter = new Splitter(MAX_SPLITS, ADMIN);
+        splitter = new Splitter(MAX_SPLITS, ADMIN, _emptySplits());
         factory = SplitterFactory(DeploySplitterFactory.deployFactory());
 
         target1 = new MockTarget();
@@ -102,6 +102,10 @@ contract SplitterTest is Test, DeploySplitterFactory {
         }
     }
 
+    function _emptySplits() internal pure returns (Splitter.Split[] memory) {
+        return new Splitter.Split[](0);
+    }
+
     // ============================================
     // 1. Constructor & Initialization
     // ============================================
@@ -120,21 +124,21 @@ contract SplitterTest is Test, DeploySplitterFactory {
 
     function test_constructor_revertsWithZeroMaxSplits() public {
         vm.expectRevert("Not enough splits");
-        new Splitter(0, ADMIN);
+        new Splitter(0, ADMIN, _emptySplits());
     }
 
     function test_constructor_revertsWhenMaxSplitsExceedsLimit() public {
         vm.expectRevert("Too many splits");
-        new Splitter(33, ADMIN);
+        new Splitter(33, ADMIN, _emptySplits());
     }
 
     function test_constructor_allowsMaxSplitsAtLimit() public {
-        Splitter s = new Splitter(32, ADMIN);
+        Splitter s = new Splitter(32, ADMIN, _emptySplits());
         assertEq(s.MAX_SPLITS(), 32);
     }
 
     function test_constructor_allowsSmallMaxSplits() public {
-        Splitter s = new Splitter(1, ADMIN);
+        Splitter s = new Splitter(1, ADMIN, _emptySplits());
         assertEq(s.MAX_SPLITS(), 1);
     }
 
@@ -291,7 +295,7 @@ contract SplitterTest is Test, DeploySplitterFactory {
     }
 
     function test_getNextAvailableIndex_revertsWhenFull() public {
-        Splitter smallSplitter = new Splitter(3, ADMIN);
+        Splitter smallSplitter = new Splitter(3, ADMIN, _emptySplits());
 
         uint256[] memory idx = new uint256[](3);
         idx[0] = 0;
@@ -823,5 +827,67 @@ contract SplitterTest is Test, DeploySplitterFactory {
         Splitter s = Splitter(payable(addr));
         assertTrue(s.hasRole(s.DEFAULT_ADMIN_ROLE(), ALICE));
         assertEq(s.MAX_SPLITS(), MAX_SPLITS);
+    }
+
+    function test_factory_createAndUpdateSplits() public {
+        Splitter.Split[] memory initialSplits = new Splitter.Split[](2);
+        initialSplits[0] = Splitter.Split({bips: 6000, _target: address(target1), _calldata: ""});
+        initialSplits[1] = Splitter.Split({bips: 4000, _target: address(target2), _calldata: ""});
+
+        vm.expectEmit(false, false, false, false);
+        emit SplitterCreated(address(0));
+
+        address addr = factory.createAndUpdateSplits(MAX_SPLITS, ALICE, initialSplits);
+
+        Splitter s = Splitter(payable(addr));
+        assertTrue(s.hasRole(s.DEFAULT_ADMIN_ROLE(), ALICE));
+        assertEq(s.MAX_SPLITS(), MAX_SPLITS);
+        assertEq(s.splitCount(), 2);
+
+        (uint16 bips0, address target0,) = s.splits(0);
+        assertEq(bips0, 6000);
+        assertEq(target0, address(target1));
+
+        (uint16 bips1, address target1Addr,) = s.splits(1);
+        assertEq(bips1, 4000);
+        assertEq(target1Addr, address(target2));
+    }
+
+    function test_factory_createAndUpdateSplits_withCalldata() public {
+        bytes memory data = abi.encodeWithSelector(MockTarget.mockFunction.selector);
+
+        Splitter.Split[] memory initialSplits = new Splitter.Split[](1);
+        initialSplits[0] = Splitter.Split({bips: BIPS, _target: address(target1), _calldata: data});
+
+        address addr = factory.createAndUpdateSplits(MAX_SPLITS, ALICE, initialSplits);
+
+        Splitter s = Splitter(payable(addr));
+        assertEq(s.splitCount(), 1);
+
+        (uint16 bips, address target, bytes memory storedCalldata) = s.splits(0);
+        assertEq(bips, BIPS);
+        assertEq(target, address(target1));
+        assertEq(storedCalldata, data);
+    }
+
+    function test_factory_createAndUpdateSplits_revertsInsufficientAllocations() public {
+        Splitter.Split[] memory initialSplits = new Splitter.Split[](1);
+        initialSplits[0] = Splitter.Split({bips: 5000, _target: address(target1), _calldata: ""});
+
+        vm.expectRevert("Insufficient allocations");
+        factory.createAndUpdateSplits(MAX_SPLITS, ALICE, initialSplits);
+    }
+
+    function test_factory_createAndUpdateSplits_factoryHasNoRoles() public {
+        Splitter.Split[] memory initialSplits = new Splitter.Split[](1);
+        initialSplits[0] = Splitter.Split({bips: BIPS, _target: address(target1), _calldata: ""});
+
+        address addr = factory.createAndUpdateSplits(MAX_SPLITS, ALICE, initialSplits);
+
+        Splitter s = Splitter(payable(addr));
+        assertFalse(s.hasRole(s.DEFAULT_ADMIN_ROLE(), address(factory)));
+        assertFalse(s.hasRole(s.ROLE_SPLIT_CREATE(), address(factory)));
+        assertFalse(s.hasRole(s.ROLE_SPLIT_UPDATE(), address(factory)));
+        assertFalse(s.hasRole(s.ROLE_SPLIT_DELETE(), address(factory)));
     }
 }

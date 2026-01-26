@@ -48,8 +48,13 @@ contract Splitter is AccessControl, ReentrancyGuard {
      * @notice Creates a new Splitter contract
      * @param maxSplits Maximum number of splits allowed (must be 1-32)
      * @param initialAdmin Address to receive all admin and split management roles
+     * @param initialSplits Optional array of splits to configure at deployment (bips must sum to 10000)
      */
-    constructor(uint256 maxSplits, address initialAdmin) {
+    constructor(
+        uint256 maxSplits,
+        address initialAdmin,
+        Split[] memory initialSplits
+    ) {
         require(maxSplits > 0, "Not enough splits");
         require(maxSplits <= 32, "Too many splits");
         MAX_SPLITS = maxSplits;
@@ -58,6 +63,25 @@ contract Splitter is AccessControl, ReentrancyGuard {
         AccessControl._grantRole(ROLE_SPLIT_CREATE, initialAdmin);
         AccessControl._grantRole(ROLE_SPLIT_UPDATE, initialAdmin);
         AccessControl._grantRole(ROLE_SPLIT_DELETE, initialAdmin);
+
+        uint256 initialSplitsLength = initialSplits.length;
+        if (initialSplitsLength > 0) {
+            bool isMsgSenderAdmin = msg.sender == initialAdmin;
+
+            if (!isMsgSenderAdmin) {
+                AccessControl._grantRole(ROLE_SPLIT_CREATE, msg.sender);
+            }
+
+            uint256[] memory initialSplitIndexes = new uint256[](initialSplitsLength);
+            for (uint256 i; i < initialSplitsLength; ++i) {
+                initialSplitIndexes[i] = i;
+            }
+            updateSplits(initialSplitIndexes, initialSplits);
+
+            if (!isMsgSenderAdmin) {
+                AccessControl._revokeRole(ROLE_SPLIT_CREATE, msg.sender);
+            }
+        }
     }
 
     receive() external payable virtual {}
@@ -97,7 +121,7 @@ contract Splitter is AccessControl, ReentrancyGuard {
      * @param splitIndexes Array of split indexes to modify
      * @param newSplits Array of new split configurations (use bips=0 to delete)
      */
-    function updateSplits(uint256[] memory splitIndexes, Split[] memory newSplits) external nonReentrant {
+    function updateSplits(uint256[] memory splitIndexes, Split[] memory newSplits) public {
         uint256 n = splitIndexes.length;
         require(newSplits.length == n, "Mismatched arguments");
 
