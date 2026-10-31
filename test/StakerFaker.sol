@@ -49,6 +49,18 @@ abstract contract StakerFaker is Test {
         );
     }
 
+    function mockGetDelegator(uint64 val_id, address delegator, uint256 stake) internal {
+        mockGetDelegator(val_id, delegator, stake, 0, 0);
+    }
+
+    function mockGetDelegator(uint64 val_id, address delegator, uint256 stake, uint256 delta_stake, uint256 next_delta_stake) internal {
+        vm.mockCall(
+            PRECOMPILE,
+            abi.encodeWithSelector(IPrecompile.getDelegator.selector, val_id, delegator),
+            abi.encode(stake, uint256(0), uint256(0), delta_stake, next_delta_stake, uint256(0), uint256(0))
+        );
+    }
+
     function clearMocks() internal {
         vm.clearMockedCalls();
     }
