@@ -6,6 +6,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./precompile/StakerUpgradeable.sol";
+import "./FreezableUpgradeable.sol";
 import "./CustomErrors.sol";
 import "./Registry.sol";
 
@@ -38,7 +39,7 @@ import "./Registry.sol";
  *           * Freezing, seizing and unfreezing work while paused
  *           * Removed initializeFromV2(); added initializeFromV3() which grants the new roles to the admin
  */
-contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgradeable, ERC20Upgradeable, AccessControlUpgradeable, PausableUpgradeable {
+contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUpgradeable, UUPSUpgradeable, ERC20Upgradeable, AccessControlUpgradeable, PausableUpgradeable {
     uint16 private constant BIPS = 100_00;
     uint40 private constant YEAR = 365 days;
 
@@ -104,8 +105,6 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
     event BatchSent(uint256 batchId, uint256 sharesBurnt, uint256 unstakeValue);
     event Compounded(uint256 indexed nodeId, uint256 amount);
     event VirtualSharesSnapshot(uint256 shares);
-    event Frozen(address indexed account);
-    event Unfrozen(address indexed account);
     event Seized(address indexed account, address indexed to, uint256 shares);
     event UnlockRequestSeized(
         address indexed account,
@@ -116,8 +115,6 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
         bool reassigned
     );
 
-    error AccountFrozen(address account);
-    error AccountNotFrozen(address account);
     error InvalidAccount();
 
     // Registry related roles
@@ -140,14 +137,6 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
     // Freeze and seize related roles
     bytes32 public constant ROLE_FREEZER = keccak256("ROLE_FREEZER");
     bytes32 public constant ROLE_SEIZER = keccak256("ROLE_SEIZER");
-
-    // keccak256(abi.encode(uint256(keccak256("wcs.kintsu.storage.Freezable")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant FreezableStorageLocation = 0x04c714fb5bf75a29910fe47e949fdd24a9443641cfcebc2c1b0249650175fb00;
-
-    /// @custom:storage-location erc7201:wcs.kintsu.storage.Freezable
-    struct FreezableStorage {
-        mapping(address => bool) isFrozen;
-    }
 
     uint256 public constant MINIMUM_CONTRIBUTE_THRESHOLD = 5_000 ether;
 
@@ -188,6 +177,7 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
     function initialize(address admin) external payable expectInitializedVersion(0) reinitializer(4) {
         UUPSUpgradeable.__UUPSUpgradeable_init();
         StakerUpgradeable.__Staker_init();
+        FreezableUpgradeable.__Freezable_init();
         ERC20Upgradeable.__ERC20_init("Kintsu Staked Monad", "sMON");
         AccessControlUpgradeable.__AccessControl_init();
         PausableUpgradeable.__Pausable_init();
@@ -246,6 +236,16 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
         if (StakerUpgradeable.getWithdrawIdsSize(nodeId) > 0) revert PendingWithdrawals();
         if (StakerUpgradeable.isForceWithdrawPending(nodeId)) revert PendingWithdrawals();
     }
+
+    /**
+     * @dev A frozen account cannot send, receive, approve, spend allowances, request/cancel an unlock, or redeem
+     * @dev Works while paused. This contract and the zero address can never be frozen, since every mint, burn,
+     *      unlock and cancellation moves shares through them.
+     */
+    function _authorizeFreeze(address account) internal view override onlyRole(ROLE_FREEZER) {
+        if (account == address(0) || account == address(this)) revert InvalidAccount();
+    }
+    function _authorizeUnfreeze(address) internal view override onlyRole(ROLE_FREEZER) {}
 
     /**
      * @notice Converts MON into LST shares at the current block timestamp
@@ -425,9 +425,8 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
      */
     function redeem(uint256 unlockIndex, address payable receiver) external whenNotPaused returns (uint96 assets) {
         // Redemption pays out MON without moving sMON, so the transfer-level freeze check does not apply here
-        FreezableStorage storage $ = _getFreezableStorage();
-        if ($.isFrozen[msg.sender]) revert AccountFrozen(msg.sender);
-        if ($.isFrozen[receiver]) revert AccountFrozen(receiver);
+        _requireNotFrozen(msg.sender);
+        _requireNotFrozen(receiver);
 
         UnlockRequest[] storage userUnlockRequestArray = userUnlockRequests[msg.sender];
         UnlockRequest memory userUnlockRequest = userUnlockRequestArray[unlockIndex]; // shadow (SLOAD 1 slot)
@@ -672,30 +671,6 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
         PausableUpgradeable._unpause();
     }
 
-    function isFrozen(address account) public view returns (bool) {
-        return _getFreezableStorage().isFrozen[account];
-    }
-
-    /**
-     * @notice Block `account` from sending, receiving, approving, spending allowances, unlocking and redeeming
-     * @dev Works while paused. This contract and the zero address can never be frozen, since every mint, burn,
-     *      unlock and cancellation moves shares through them.
-     */
-    function freeze(address account) external onlyRole(ROLE_FREEZER) {
-        if (account == address(0) || account == address(this)) revert InvalidAccount();
-        FreezableStorage storage $ = _getFreezableStorage();
-        if ($.isFrozen[account]) revert NoChange();
-        $.isFrozen[account] = true;
-        emit Frozen(account);
-    }
-
-    function unfreeze(address account) external onlyRole(ROLE_FREEZER) {
-        FreezableStorage storage $ = _getFreezableStorage();
-        if (!$.isFrozen[account]) revert NoChange();
-        $.isFrozen[account] = false;
-        emit Unfrozen(account);
-    }
-
     /**
      * @notice Move the entire sMON balance of a frozen account to `to`
      * @dev Shares are transferred, never burnt: burning would raise the redemption ratio for every other holder
@@ -889,9 +864,8 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
      */
     function _update(address from, address to, uint256 value) internal override {
         PausableUpgradeable._requireNotPaused();
-        FreezableStorage storage $ = _getFreezableStorage();
-        if ($.isFrozen[from]) revert AccountFrozen(from);
-        if ($.isFrozen[to]) revert AccountFrozen(to);
+        _requireNotFrozen(from);
+        _requireNotFrozen(to);
         ERC20Upgradeable._update(from, to, value);
     }
 
@@ -901,31 +875,23 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, UUPSUpgrade
      */
     function _approve(address owner, address spender, uint256 value, bool emitEvent) internal override {
         if (value > 0) {
-            FreezableStorage storage $ = _getFreezableStorage();
-            if ($.isFrozen[owner]) revert AccountFrozen(owner);
-            if ($.isFrozen[spender]) revert AccountFrozen(spender);
+            _requireNotFrozen(owner);
+            _requireNotFrozen(spender);
         }
         ERC20Upgradeable._approve(owner, spender, value, emitEvent);
     }
 
     /// @dev A frozen spender cannot use allowances it was given before it was frozen
     function _spendAllowance(address owner, address spender, uint256 value) internal override {
-        if (_getFreezableStorage().isFrozen[spender]) revert AccountFrozen(spender);
+        _requireNotFrozen(spender);
         ERC20Upgradeable._spendAllowance(owner, spender, value);
-    }
-
-    function _getFreezableStorage() private pure returns (FreezableStorage storage $) {
-        assembly {
-            $.slot := FreezableStorageLocation
-        }
     }
 
     /// @dev Seizing requires a frozen source and a usable, different, unfrozen recipient
     function _requireSeizable(address account, address to) private view {
-        FreezableStorage storage $ = _getFreezableStorage();
-        if (!$.isFrozen[account]) revert AccountNotFrozen(account);
+        _requireFrozen(account);
         if (to == address(0) || to == address(this) || to == account) revert InvalidAccount();
-        if ($.isFrozen[to]) revert AccountFrozen(to);
+        _requireNotFrozen(to);
     }
 
     /**

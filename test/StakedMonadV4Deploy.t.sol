@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "./StakedMonadV3Deploy.t.sol";
 import {StakedMonadV4} from "../src/StakedMonadV4.sol";
+import {FreezableUpgradeable} from "../src/FreezableUpgradeable.sol";
 import {DeployV4} from "../script/DeployV4.s.sol";
 
 /// @notice Shared V4 suite. Inherits every V1 and V3 test so they also run against V4.
@@ -74,7 +75,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
     function test_freeze_and_unfreeze_state_and_events() public {
         vm.startPrank(ADMIN);
         vm.expectEmit(true, false, false, true, address(stakedMonad));
-        emit StakedMonadV4.Frozen(ALICE);
+        emit FreezableUpgradeable.Frozen(ALICE);
         v4().freeze(ALICE);
         assertTrue(v4().isFrozen(ALICE));
 
@@ -82,7 +83,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(ALICE);
 
         vm.expectEmit(true, false, false, true, address(stakedMonad));
-        emit StakedMonadV4.Unfrozen(ALICE);
+        emit FreezableUpgradeable.Unfrozen(ALICE);
         v4().unfreeze(ALICE);
         assertFalse(v4().isFrozen(ALICE));
 
@@ -98,16 +99,16 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(ALICE);
 
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, ALICE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
         stakedMonad.transfer(BOB, shares);
 
         vm.prank(BOB);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, ALICE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
         stakedMonad.transfer(ALICE, 1);
 
         // Deposits cannot mint to a frozen receiver either
         vm.prank(BOB);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, ALICE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
         stakedMonad.deposit{value: 1 ether}(0, ALICE);
 
         // Unfreezing restores normal transfers
@@ -129,7 +130,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(CHARLIE);
 
         vm.prank(CHARLIE);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, CHARLIE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, CHARLIE));
         stakedMonad.transferFrom(ALICE, BOB, shares);
         assertEq(stakedMonad.balanceOf(ALICE), shares, "Alice keeps her shares");
     }
@@ -143,7 +144,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(CHARLIE);
 
         vm.startPrank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, CHARLIE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, CHARLIE));
         stakedMonad.approve(CHARLIE, 1);
 
         // Revoking the old approval still works
@@ -157,7 +158,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(ALICE);
 
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, ALICE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
         stakedMonad.approve(BOB, 1);
     }
 
@@ -189,10 +190,10 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(ALICE);
 
         vm.startPrank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, ALICE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
         stakedMonad.requestUnlock(shares / 2, 0);
 
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, ALICE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
         stakedMonad.cancelUnlockRequest(0);
     }
 
@@ -206,7 +207,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(ALICE);
 
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, ALICE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
         stakedMonad.redeem(0, ALICE);
     }
 
@@ -220,7 +221,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(CHARLIE);
 
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, CHARLIE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, CHARLIE));
         stakedMonad.redeem(0, CHARLIE);
     }
 
@@ -245,7 +246,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
     function test_seize_requires_frozen_account() public {
         _depositAs(ALICE, DEPOSIT);
         vm.prank(ADMIN);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountNotFrozen.selector, ALICE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountNotFrozen.selector, ALICE));
         v4().seize(ALICE, RECOVERY);
     }
 
@@ -261,7 +262,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().seize(ALICE, address(stakedMonad));
         vm.expectRevert(StakedMonadV4.InvalidAccount.selector);
         v4().seize(ALICE, ALICE);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, CHARLIE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, CHARLIE));
         v4().seize(ALICE, CHARLIE);
     }
 
@@ -337,7 +338,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
 
         // The thief has nothing left to redeem
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, ALICE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
         stakedMonad.redeem(0, ALICE);
     }
 
@@ -347,7 +348,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         stakedMonad.requestUnlock(shares, 0);
 
         vm.startPrank(ADMIN);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountNotFrozen.selector, ALICE));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountNotFrozen.selector, ALICE));
         v4().seizeUnlockRequest(ALICE, 0, RECOVERY);
 
         v4().freeze(ALICE);

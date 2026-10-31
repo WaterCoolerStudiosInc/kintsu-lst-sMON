@@ -5,6 +5,7 @@ import {Test} from "forge-std/src/Test.sol";
 import {StakerFaker} from "./StakerFaker.sol";
 import {StakedMonadV3} from "../src/StakedMonadV3.sol";
 import {StakedMonadV4, UUPSUpgradeable} from "../src/StakedMonadV4.sol";
+import {FreezableUpgradeable} from "../src/FreezableUpgradeable.sol";
 
 /**
  * @notice Replays the 2026-10-31 kintsu.xyz drain against Monad mainnet state.
@@ -66,7 +67,7 @@ contract StakedMonadV4MainnetForkTest is Test, StakerFaker {
         StakerFaker.mockGetEpoch(2_400, false);
 
         vm.prank(DRAINER);
-        vm.expectRevert(abi.encodeWithSelector(StakedMonadV4.AccountFrozen.selector, DRAINER));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, DRAINER));
         v4.redeem(0, payable(DRAINER));
 
         uint256 balanceBefore = RECOVERY.balance;
