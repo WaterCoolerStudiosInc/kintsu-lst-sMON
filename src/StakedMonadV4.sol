@@ -7,6 +7,7 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "./precompile/StakerUpgradeable.sol";
 import "./FreezableUpgradeable.sol";
+import "./TransferPausableUpgradeable.sol";
 import "./CustomErrors.sol";
 import "./Registry.sol";
 
@@ -29,8 +30,15 @@ import "./Registry.sol";
  *           * Bonding returns early instead of dividing by zero when no node is below its target
  *
  *         Changes in v4:
- *           * pause() now also halts every sMON transfer, mint and burn (same check as OpenZeppelin ERC20Pausable)
- *           * unpause() now requires ROLE_UNPAUSE instead of ROLE_PAUSE, so a fast, lower-trust pauser key
+ *           * Added a transfer pause, separate from the protocol pause: pauseTransfers() (ROLE_PAUSE) halts
+ *             transfer() and transferFrom(); unpauseTransfers() (ROLE_UNPAUSE) resumes them. Deposits, unlocks,
+ *             cancellations, batches, redemptions and fee claims stay governed by the protocol pause only, and
+ *             the protocol pause leaves holder-to-holder transfers running
+ *           * pauseProtocolAndTransfers() (ROLE_PAUSE) sets both the protocol pause and the transfer pause in one call
+ *           * Renamed pause()/unpause() to pauseProtocol()/unpauseProtocol(). paused(), the Paused/Unpaused
+ *             events and the EnforcedPause error keep their OpenZeppelin names
+ *           * Added protocolPaused(), which returns the same value as paused(), to match transfersPaused()
+ *           * unpauseProtocol() requires ROLE_UNPAUSE instead of ROLE_PAUSE, so a fast, lower-trust pauser key
  *             cannot resume the contract mid-incident
  *           * ROLE_FREEZER can freeze an account: it can no longer send, receive, approve a new allowance,
  *             spend an allowance, request/cancel an unlock, or redeem
@@ -40,11 +48,11 @@ import "./Registry.sol";
  *           * ROLE_SEIZER can take over a frozen account's unlock request with seizeUnlockRequest():
  *             a request still in the open batch is cancelled and its shares go to the recovery address;
  *             a request already submitted (unbonding) is reassigned so the recovery address redeems it
- *           * Freezing, seizing and unfreezing work while paused
+ *           * Freezing, seizing and unfreezing work while paused and while transfers are paused
  *           * Removed initializeFromV2(); added initializeFromV3() which grants the new roles to the admin
  *             (ROLE_UNPAUSE, ROLE_FREEZER, ROLE_UNFREEZER, ROLE_SEIZER)
  */
-contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUpgradeable, UUPSUpgradeable, ERC20Upgradeable, AccessControlUpgradeable, PausableUpgradeable {
+contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUpgradeable, TransferPausableUpgradeable, UUPSUpgradeable, ERC20Upgradeable, AccessControlUpgradeable, PausableUpgradeable {
     uint16 private constant BIPS = 100_00;
     uint40 private constant YEAR = 365 days;
 
@@ -185,6 +193,7 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
         UUPSUpgradeable.__UUPSUpgradeable_init();
         StakerUpgradeable.__Staker_init();
         FreezableUpgradeable.__Freezable_init();
+        TransferPausableUpgradeable.__TransferPausable_init();
         ERC20Upgradeable.__ERC20_init("Kintsu Staked Monad", "sMON");
         AccessControlUpgradeable.__AccessControl_init();
         PausableUpgradeable.__Pausable_init();
@@ -261,6 +270,26 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
      *      makes them unseizable, so it can be kept on a higher-trust key than the freezer
      */
     function _authorizeUnfreeze(address) internal view override onlyRole(ROLE_UNFREEZER) {}
+
+    /// @dev Same role split as the protocol pause: a fast, lower-trust key may halt transfers but not resume them
+    function _authorizePauseTransfers() internal view override onlyRole(ROLE_PAUSE) {}
+    function _authorizeUnpauseTransfers() internal view override onlyRole(ROLE_UNPAUSE) {}
+
+    /**
+     * @dev Blocked while transfers are paused. Protocol flows move shares with internal calls and are governed by
+     *      the protocol pause instead. Any new entrypoint that moves sMON between holders must also call
+     *      `_requireTransfersNotPaused()`.
+     */
+    function transfer(address to, uint256 value) public override returns (bool) {
+        TransferPausableUpgradeable._requireTransfersNotPaused();
+        return ERC20Upgradeable.transfer(to, value);
+    }
+
+    /// @dev See `transfer()`
+    function transferFrom(address from, address to, uint256 value) public override returns (bool) {
+        TransferPausableUpgradeable._requireTransfersNotPaused();
+        return ERC20Upgradeable.transferFrom(from, to, value);
+    }
 
     /**
      * @notice Converts MON into LST shares at the current block timestamp
@@ -678,15 +707,39 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
         isExitFeeExempt[user] = isExempt;
     }
 
-    function pause() external onlyRole(ROLE_PAUSE) {
+    /**
+     * @notice Pause the protocol: deposits, unlocks, cancellations, batches, redemptions, sweeps and fee claims
+     * @notice Holder-to-holder transfers keep working; see `pauseTransfers()` and `pauseProtocolAndTransfers()`
+     * @dev Read the state with `protocolPaused()` (or OpenZeppelin's `paused()`)
+     */
+    function pauseProtocol() external onlyRole(ROLE_PAUSE) {
         PausableUpgradeable._pause();
+    }
+
+    /// @notice Whether the protocol is paused. Same value as `paused()`; named to match `transfersPaused()`.
+    function protocolPaused() external view returns (bool) {
+        return PausableUpgradeable.paused();
+    }
+
+    /**
+     * @notice Pause the protocol and holder-to-holder transfers in one call
+     * @dev Sets whichever of the two is not already set; reverts with `NoChange` only if both already are
+     * @dev Each is resumed separately, with `unpauseProtocol()` and `unpauseTransfers()`
+     */
+    function pauseProtocolAndTransfers() external onlyRole(ROLE_PAUSE) {
+        bool isProtocolPaused = PausableUpgradeable.paused();
+        bool isTransfersPaused = TransferPausableUpgradeable.transfersPaused();
+        if (isProtocolPaused && isTransfersPaused) revert NoChange();
+
+        if (!isProtocolPaused) PausableUpgradeable._pause();
+        if (!isTransfersPaused) TransferPausableUpgradeable._pauseTransfers();
     }
 
     /**
      * @dev Separate from ROLE_PAUSE: pausing only protects, but unpausing mid-incident lets an attacker move or
      *      redeem again, so it can be kept on a higher-trust key than the pauser
      */
-    function unpause() external onlyRole(ROLE_UNPAUSE) {
+    function unpauseProtocol() external onlyRole(ROLE_UNPAUSE) {
         PausableUpgradeable._unpause();
     }
 
@@ -704,7 +757,7 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
         uint256 shares = ERC20Upgradeable.balanceOf(account);
         if (shares == 0) revert NoChange();
 
-        // Call the base implementation directly to bypass the pause and freeze checks in `_update()`
+        // Call the base implementation directly to bypass the freeze check in `_update()`
         ERC20Upgradeable._update(account, to, shares);
 
         emit Seized(account, to, shares);
@@ -728,7 +781,7 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
             // Batch not submitted yet: cancel the request and hand its escrowed shares to `to`
             uint96 shares = _removeOpenUnlockRequest(account, unlockIndex);
 
-            // Call the base implementation directly to bypass the pause and freeze checks in `_update()`
+            // Call the base implementation directly to bypass the freeze check in `_update()`
             ERC20Upgradeable._update(address(this), to, shares);
 
             emit UnlockRequestSeized(account, unlockIndex, to, shares, userUnlockRequest.spotValue, false);
@@ -878,11 +931,12 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
 
     /**
      * @dev Every sMON transfer, mint and burn passes through here
-     * @dev Pause check matches OpenZeppelin's ERC20Pausable; freeze check blocks frozen senders and recipients
-     * @dev `seize()` and `seizeUnlockRequest()` call `ERC20Upgradeable._update()` directly to skip both checks
+     * @dev Freeze check blocks frozen senders and recipients. There is no pause check here: every protocol path
+     *      that mints, burns or moves shares is `whenNotPaused`, and holder transfers are gated by the transfer
+     *      pause in `transfer()` / `transferFrom()`.
+     * @dev `seize()` and `seizeUnlockRequest()` call `ERC20Upgradeable._update()` directly to skip the freeze check
      */
     function _update(address from, address to, uint256 value) internal override {
-        PausableUpgradeable._requireNotPaused();
         _requireNotFrozen(from);
         _requireNotFrozen(to);
         ERC20Upgradeable._update(from, to, value);

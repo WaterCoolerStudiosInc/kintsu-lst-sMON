@@ -58,7 +58,7 @@ contract StakedMonadV4MainnetForkTest is Test, StakerFaker {
         v4.seizeUnlockRequest(DRAINER, 0, RECOVERY);
 
         // sMON was paused on 2026-10-31 to stop the drainer redeeming; resume once the claim is safe
-        if (v4.paused()) v4.unpause();
+        if (v4.paused()) v4.unpauseProtocol();
         vm.stopPrank();
 
         assertEq(v4.getAllUserUnlockRequests(DRAINER).length, 0, "Drainer has no claim left");

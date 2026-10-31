@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import "./StakedMonadV3Deploy.t.sol";
 import {StakedMonadV4} from "../src/StakedMonadV4.sol";
 import {FreezableUpgradeable} from "../src/FreezableUpgradeable.sol";
+import {TransferPausableUpgradeable} from "../src/TransferPausableUpgradeable.sol";
 import {DeployV4} from "../script/DeployV4.s.sol";
 
 /// @notice Shared V4 suite. Inherits every V1 and V3 test so they also run against V4.
@@ -15,6 +16,14 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
 
     function v4() internal view returns (StakedMonadV4) {
         return StakedMonadV4(payable(address(stakedMonad)));
+    }
+
+    function _pauseProtocol() internal override {
+        v4().pauseProtocol();
+    }
+
+    function _unpauseProtocol() internal override {
+        v4().unpauseProtocol();
     }
 
     function test_pause_roles_granted_to_admin() public view {
@@ -38,12 +47,12 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
 
     function test_only_unpauser_can_unpause() public {
         vm.prank(ADMIN);
-        stakedMonad.pause();
+        v4().pauseProtocol();
 
         bytes32 role = v4().ROLE_UNPAUSE();
         vm.prank(BOB);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
-        stakedMonad.unpause();
+        v4().unpauseProtocol();
     }
 
     /// @notice A pauser-only key (e.g. a fast monitoring bot) cannot resume the contract
@@ -54,11 +63,11 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().grantRole(pauser, CHARLIE);
 
         vm.prank(CHARLIE);
-        stakedMonad.pause();
+        v4().pauseProtocol();
 
         vm.prank(CHARLIE);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, unpauser));
-        stakedMonad.unpause();
+        v4().unpauseProtocol();
         assertTrue(stakedMonad.paused(), "Still paused");
     }
 
@@ -71,12 +80,12 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
 
         vm.prank(CHARLIE);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, pauser));
-        stakedMonad.pause();
+        v4().pauseProtocol();
 
         vm.prank(ADMIN);
-        stakedMonad.pause();
+        v4().pauseProtocol();
         vm.prank(CHARLIE);
-        stakedMonad.unpause();
+        v4().unpauseProtocol();
         assertFalse(stakedMonad.paused(), "Unpaused by the unpauser");
     }
 
@@ -276,22 +285,224 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         stakedMonad.approve(BOB, 1);
     }
 
-    function test_pause_blocks_transfers() public {
+    /// @notice The protocol pause no longer touches holder-to-holder transfers (V3 behaviour)
+    function test_protocol_pause_does_not_block_transfers() public {
         uint96 shares = _depositAs(ALICE, DEPOSIT);
 
         vm.prank(ADMIN);
-        stakedMonad.pause();
+        v4().pauseProtocol();
 
+        vm.prank(ALICE);
+        stakedMonad.transfer(BOB, shares / 2);
+        assertEq(stakedMonad.balanceOf(BOB), shares / 2, "transfer works while the protocol is paused");
+
+        vm.prank(ALICE);
+        stakedMonad.approve(CHARLIE, shares / 2);
+        vm.prank(CHARLIE);
+        stakedMonad.transferFrom(ALICE, BOB, shares / 2);
+        assertEq(stakedMonad.balanceOf(BOB), shares, "transferFrom works while the protocol is paused");
+
+        // Protocol entrypoints are still paused
         vm.prank(ALICE);
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
-        stakedMonad.transfer(BOB, shares);
+        stakedMonad.deposit{value: DEPOSIT}(0, ALICE);
+    }
+
+    function test_protocolPaused_matches_paused() public {
+        assertFalse(v4().protocolPaused());
+
+        vm.startPrank(ADMIN);
+        v4().pauseProtocol();
+        assertTrue(v4().protocolPaused());
+        assertTrue(stakedMonad.paused());
+        assertFalse(v4().transfersPaused(), "Transfer pause is independent");
+
+        v4().unpauseProtocol();
+        assertFalse(v4().protocolPaused());
+        assertFalse(stakedMonad.paused());
+    }
+
+    function test_pauseTransfers_blocks_transfer_and_transferFrom() public {
+        uint96 shares = _depositAs(ALICE, DEPOSIT);
 
         vm.prank(ADMIN);
-        stakedMonad.unpause();
+        vm.expectEmit(false, false, false, true, address(stakedMonad));
+        emit TransferPausableUpgradeable.TransfersPaused(ADMIN);
+        v4().pauseTransfers();
+        assertTrue(v4().transfersPaused());
+        assertFalse(v4().protocolPaused(), "Protocol pause is independent");
+
+        // Approvals still work, as with OpenZeppelin's ERC20Pausable
+        vm.prank(ALICE);
+        stakedMonad.approve(CHARLIE, shares);
 
         vm.prank(ALICE);
+        vm.expectRevert(TransferPausableUpgradeable.EnforcedTransferPause.selector);
         stakedMonad.transfer(BOB, shares);
+
+        vm.prank(CHARLIE);
+        vm.expectRevert(TransferPausableUpgradeable.EnforcedTransferPause.selector);
+        stakedMonad.transferFrom(ALICE, BOB, shares);
+
+        vm.prank(ADMIN);
+        vm.expectEmit(false, false, false, true, address(stakedMonad));
+        emit TransferPausableUpgradeable.TransfersUnpaused(ADMIN);
+        v4().unpauseTransfers();
+        assertFalse(v4().transfersPaused());
+
+        vm.prank(ALICE);
+        stakedMonad.transfer(BOB, shares / 2);
+        vm.prank(CHARLIE);
+        stakedMonad.transferFrom(ALICE, BOB, shares / 2);
         assertEq(stakedMonad.balanceOf(BOB), shares);
+    }
+
+    /// @notice Only holder-to-holder movement is halted; every protocol flow keeps working
+    function test_pauseTransfers_leaves_protocol_running() public {
+        _depositAs(ALICE, DEPOSIT);
+
+        vm.prank(ADMIN);
+        v4().pauseTransfers();
+
+        // Deposit (mint)
+        uint96 shares = _depositAs(BOB, DEPOSIT);
+        assertGt(shares, 0, "Deposit works");
+
+        // Request and cancel an unlock (transfers to and from the contract)
+        vm.startPrank(BOB);
+        stakedMonad.requestUnlock(shares, 0);
+        stakedMonad.cancelUnlockRequest(0);
+        assertEq(stakedMonad.balanceOf(BOB), shares, "Cancel returns the shares");
+        StakedMonadV4.UnlockRequest memory request;
+        stakedMonad.requestUnlock(shares, 0);
+        request = v4().getAllUserUnlockRequests(BOB)[0];
+        vm.stopPrank();
+
+        // Submit the batch (burn) and redeem
+        _submitBatchAndPassWithdrawDelay();
+        uint256 balanceBefore = BOB.balance;
+        vm.prank(BOB);
+        stakedMonad.redeem(0, BOB);
+        assertEq(BOB.balance - balanceBefore, request.spotValue, "Redeem works");
+
+        // Claim protocol fees (mint and transfer out of the contract)
+        vm.warp(block.timestamp + 30 days);
+        vm.prank(ADMIN);
+        stakedMonad.claimProtocolFees(RECOVERY);
+        assertGt(stakedMonad.balanceOf(RECOVERY), 0, "Fee claim works");
+    }
+
+    function test_pauseTransfers_and_unpauseTransfers_revert_on_no_change() public {
+        vm.startPrank(ADMIN);
+        vm.expectRevert(CustomErrors.NoChange.selector);
+        v4().unpauseTransfers();
+
+        v4().pauseTransfers();
+        vm.expectRevert(CustomErrors.NoChange.selector);
+        v4().pauseTransfers();
+    }
+
+    function test_only_pauser_can_pause_transfers() public {
+        bytes32 pauser = v4().ROLE_PAUSE();
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, ALICE, pauser));
+        v4().pauseTransfers();
+    }
+
+    /// @notice A pauser-only key can halt transfers but not resume them
+    function test_pauser_cannot_unpause_transfers() public {
+        bytes32 pauser = v4().ROLE_PAUSE();
+        bytes32 unpauser = v4().ROLE_UNPAUSE();
+        vm.prank(ADMIN);
+        v4().grantRole(pauser, CHARLIE);
+
+        vm.startPrank(CHARLIE);
+        v4().pauseTransfers();
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, unpauser));
+        v4().unpauseTransfers();
+        assertTrue(v4().transfersPaused(), "Still paused");
+    }
+
+    /// @notice An unpauser-only key can resume transfers but not halt them
+    function test_unpauser_cannot_pause_transfers() public {
+        bytes32 pauser = v4().ROLE_PAUSE();
+        bytes32 unpauser = v4().ROLE_UNPAUSE();
+        vm.prank(ADMIN);
+        v4().grantRole(unpauser, CHARLIE);
+
+        vm.prank(CHARLIE);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, pauser));
+        v4().pauseTransfers();
+
+        vm.prank(ADMIN);
+        v4().pauseTransfers();
+        vm.prank(CHARLIE);
+        v4().unpauseTransfers();
+        assertFalse(v4().transfersPaused(), "Unpaused by the unpauser");
+    }
+
+    function test_pauseProtocolAndTransfers_sets_both_pauses() public {
+        uint96 shares = _depositAs(ALICE, DEPOSIT);
+
+        vm.prank(ADMIN);
+        vm.expectEmit(false, false, false, true, address(stakedMonad));
+        emit PausableUpgradeable.Paused(ADMIN);
+        vm.expectEmit(false, false, false, true, address(stakedMonad));
+        emit TransferPausableUpgradeable.TransfersPaused(ADMIN);
+        v4().pauseProtocolAndTransfers();
+
+        assertTrue(v4().protocolPaused(), "Protocol paused");
+        assertTrue(v4().transfersPaused(), "Transfers paused");
+
+        vm.startPrank(ALICE);
+        vm.expectRevert(TransferPausableUpgradeable.EnforcedTransferPause.selector);
+        stakedMonad.transfer(BOB, shares);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        stakedMonad.requestUnlock(shares, 0);
+        vm.stopPrank();
+    }
+
+    /// @notice pauseProtocolAndTransfers completes a half-paused state instead of reverting
+    function test_pauseProtocolAndTransfers_sets_whichever_is_missing() public {
+        vm.startPrank(ADMIN);
+        v4().pauseProtocol();
+        v4().pauseProtocolAndTransfers();
+        assertTrue(v4().transfersPaused(), "Transfer pause added on top of protocol pause");
+
+        v4().unpauseProtocol();
+        v4().pauseProtocolAndTransfers();
+        assertTrue(stakedMonad.paused(), "Protocol pause added on top of transfer pause");
+
+        vm.expectRevert(CustomErrors.NoChange.selector);
+        v4().pauseProtocolAndTransfers();
+    }
+
+    /// @notice pauseProtocolAndTransfers needs only ROLE_PAUSE; resuming still needs ROLE_UNPAUSE for each pause
+    function test_pauseProtocolAndTransfers_roles() public {
+        bytes32 pauser = v4().ROLE_PAUSE();
+        bytes32 unpauser = v4().ROLE_UNPAUSE();
+        vm.startPrank(ADMIN);
+        v4().grantRole(pauser, CHARLIE);
+        v4().grantRole(unpauser, BOB);
+        vm.stopPrank();
+
+        vm.prank(BOB);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, pauser));
+        v4().pauseProtocolAndTransfers();
+
+        vm.startPrank(CHARLIE);
+        v4().pauseProtocolAndTransfers();
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, unpauser));
+        v4().unpauseProtocol();
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, unpauser));
+        v4().unpauseTransfers();
+        vm.stopPrank();
+
+        vm.startPrank(BOB);
+        v4().unpauseProtocol();
+        v4().unpauseTransfers();
+        assertFalse(stakedMonad.paused());
+        assertFalse(v4().transfersPaused());
     }
 
     function test_frozen_account_cannot_request_or_cancel_unlock() public {
@@ -391,11 +602,28 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         uint96 shares = _depositAs(ALICE, DEPOSIT);
 
         vm.startPrank(ADMIN);
-        stakedMonad.pause();
+        v4().pauseProtocol();
         v4().freeze(ALICE);
         v4().seize(ALICE, RECOVERY);
         v4().unfreeze(ALICE);
         assertEq(stakedMonad.balanceOf(RECOVERY), shares);
+    }
+
+    function test_freeze_and_seize_work_while_all_paused() public {
+        uint96 shares = _depositAs(ALICE, DEPOSIT);
+        vm.prank(ALICE);
+        stakedMonad.requestUnlock(shares / 2, 0);
+        uint96 escrowed = v4().getAllUserUnlockRequests(ALICE)[0].shares;
+
+        vm.startPrank(ADMIN);
+        v4().pauseProtocolAndTransfers();
+        v4().freeze(ALICE);
+        v4().seize(ALICE, RECOVERY);
+        v4().seizeUnlockRequest(ALICE, 0, RECOVERY);
+        v4().unfreeze(ALICE);
+        assertEq(stakedMonad.balanceOf(RECOVERY), shares, "Balance and escrowed unlock both recovered");
+        assertEq(stakedMonad.balanceOf(ALICE), 0);
+        assertGt(escrowed, 0);
     }
 
     /// @notice Request still in the open batch: cancel it and hand every escrowed share (fee included) to recovery

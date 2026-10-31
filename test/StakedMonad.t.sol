@@ -10,6 +10,15 @@ import {DeployV1} from "../script/DeployV1.s.sol";
 contract StakedMonadTest is Test, DeployV1, StakerFaker {
     StakedMonad public stakedMonad;
 
+    /// @dev V4 renamed pause()/unpause() to pauseProtocol()/unpauseProtocol(); V4 suites override these
+    function _pauseProtocol() internal virtual {
+        stakedMonad.pause();
+    }
+
+    function _unpauseProtocol() internal virtual {
+        stakedMonad.unpause();
+    }
+
     address payable public ADMIN = payable(vm.addr(100));
     address payable public ALICE = payable(vm.addr(101));
     address payable public BOB = payable(vm.addr(102));
@@ -89,10 +98,10 @@ contract StakedMonadTest is Test, DeployV1, StakerFaker {
         stakedMonad.updateWeights(weightDeltas);
 
         // Cannot deposit when paused
-        stakedMonad.pause();
+        _pauseProtocol();
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         stakedMonad.deposit{value: depositAmount}(0, ADMIN);
-        stakedMonad.unpause();
+        _unpauseProtocol();
 
         vm.startPrank(ALICE);
         uint256 sharesAlice = stakedMonad.deposit{value: depositAmount}(0, ALICE);
@@ -132,10 +141,10 @@ contract StakedMonadTest is Test, DeployV1, StakerFaker {
         stakedMonad.updateWeights(weightDeltas);
 
         // Cannot deposit when paused
-        stakedMonad.pause();
+        _pauseProtocol();
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         stakedMonad.deposit{value: depositAmount}(0, ALICE);
-        stakedMonad.unpause();
+        _unpauseProtocol();
 
         vm.startPrank(ALICE);
         uint96 sharesAlice = stakedMonad.deposit{value: depositAmount}(0, ALICE);
@@ -221,12 +230,12 @@ contract StakedMonadTest is Test, DeployV1, StakerFaker {
 
         // Cannot redeem when paused
         vm.startPrank(ADMIN);
-        stakedMonad.pause();
+        _pauseProtocol();
         vm.startPrank(ALICE);
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         stakedMonad.redeem(0, ALICE);
         vm.startPrank(ADMIN);
-        stakedMonad.unpause();
+        _unpauseProtocol();
         vm.startPrank(ALICE);
 
         // Alice successfully redeems
@@ -384,12 +393,12 @@ contract StakedMonadTest is Test, DeployV1, StakerFaker {
 
         // Cannot cancel unlock when paused
         vm.startPrank(ADMIN);
-        stakedMonad.pause();
+        _pauseProtocol();
         vm.startPrank(ALICE);
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         stakedMonad.cancelUnlockRequest(0);
         vm.startPrank(ADMIN);
-        stakedMonad.unpause();
+        _unpauseProtocol();
         vm.startPrank(ALICE);
 
         // Successfully cancel unlock request
@@ -765,12 +774,12 @@ contract StakedMonadTest is Test, DeployV1, StakerFaker {
             BOB,
             stakedMonad.ROLE_PAUSE()
         ));
-        stakedMonad.pause();
+        _pauseProtocol();
 
         // Admin can pause
         assertTrue(stakedMonad.hasRole(stakedMonad.ROLE_PAUSE(), ADMIN));
         vm.startPrank(ADMIN);
-        stakedMonad.pause();
+        _pauseProtocol();
         assertTrue(stakedMonad.paused());
     }
 
