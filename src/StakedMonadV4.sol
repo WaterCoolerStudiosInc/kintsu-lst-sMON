@@ -276,22 +276,6 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
     function _authorizeUnpauseTransfers() internal view override onlyRole(ROLE_UNPAUSE) {}
 
     /**
-     * @dev Blocked while transfers are paused. Protocol flows move shares with internal calls and are governed by
-     *      the protocol pause instead. Any new entrypoint that moves sMON between holders must also call
-     *      `_requireTransfersNotPaused()`.
-     */
-    function transfer(address to, uint256 value) public override returns (bool) {
-        TransferPausableUpgradeable._requireTransfersNotPaused();
-        return ERC20Upgradeable.transfer(to, value);
-    }
-
-    /// @dev See `transfer()`
-    function transferFrom(address from, address to, uint256 value) public override returns (bool) {
-        TransferPausableUpgradeable._requireTransfersNotPaused();
-        return ERC20Upgradeable.transferFrom(from, to, value);
-    }
-
-    /**
      * @notice Converts MON into LST shares at the current block timestamp
      * @dev `totalShares()` accounts for both minted and mintable shares
      */
@@ -363,6 +347,11 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
         uint96[] memory nodeDeficits
     ) {
         return _calculateStakeDeltas(Registry.nodes, newTotalStaked);
+    }
+
+    /// @notice Whether the protocol is paused. Same value as `paused()`; named to match `transfersPaused()`.
+    function protocolPaused() external view returns (bool) {
+        return PausableUpgradeable.paused();
     }
 
     /**
@@ -716,11 +705,6 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
         PausableUpgradeable._pause();
     }
 
-    /// @notice Whether the protocol is paused. Same value as `paused()`; named to match `transfersPaused()`.
-    function protocolPaused() external view returns (bool) {
-        return PausableUpgradeable.paused();
-    }
-
     /**
      * @notice Pause the protocol and holder-to-holder transfers in one call
      * @dev Sets whichever of the two is not already set; reverts with `NoChange` only if both already are
@@ -792,6 +776,53 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
 
             emit UnlockRequestSeized(account, unlockIndex, to, userUnlockRequest.shares, userUnlockRequest.spotValue, true);
         }
+    }
+
+    /**
+     * @dev Blocked while transfers are paused. Protocol flows move shares with internal calls and are governed by
+     *      the protocol pause instead. Any new entrypoint that moves sMON between holders must also call
+     *      `_requireTransfersNotPaused()`.
+     */
+    function transfer(address to, uint256 value) public override returns (bool) {
+        TransferPausableUpgradeable._requireTransfersNotPaused();
+        return ERC20Upgradeable.transfer(to, value);
+    }
+
+    /// @dev See `transfer()`
+    function transferFrom(address from, address to, uint256 value) public override returns (bool) {
+        TransferPausableUpgradeable._requireTransfersNotPaused();
+        return ERC20Upgradeable.transferFrom(from, to, value);
+    }
+
+    /**
+     * @dev Every sMON transfer, mint and burn passes through here
+     * @dev Freeze check blocks frozen senders and recipients. There is no pause check here: every protocol path
+     *      that mints, burns or moves shares is `whenNotPaused`, and holder transfers are gated by the transfer
+     *      pause in `transfer()` / `transferFrom()`.
+     * @dev `seize()` and `seizeUnlockRequest()` call `ERC20Upgradeable._update()` directly to skip the freeze check
+     */
+    function _update(address from, address to, uint256 value) internal override {
+        _requireNotFrozen(from);
+        _requireNotFrozen(to);
+        ERC20Upgradeable._update(from, to, value);
+    }
+
+    /**
+     * @dev A frozen account cannot be granted a new allowance, but anyone may still set an allowance to zero,
+     *      so holders can revoke approvals they gave to a frozen account
+     */
+    function _approve(address owner, address spender, uint256 value, bool emitEvent) internal override {
+        if (value > 0) {
+            _requireNotFrozen(owner);
+            _requireNotFrozen(spender);
+        }
+        ERC20Upgradeable._approve(owner, spender, value, emitEvent);
+    }
+
+    /// @dev A frozen spender cannot use allowances it was given before it was frozen
+    function _spendAllowance(address owner, address spender, uint256 value) internal override {
+        _requireNotFrozen(spender);
+        ERC20Upgradeable._spendAllowance(owner, spender, value);
     }
 
     function _getActivityEpoch() private returns (uint64 currentEpoch, uint64 activityEpoch) {
@@ -927,37 +958,6 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
                 StakerUpgradeable.undelegate(_nodes[i].id, unbondAmount);
             }
         }
-    }
-
-    /**
-     * @dev Every sMON transfer, mint and burn passes through here
-     * @dev Freeze check blocks frozen senders and recipients. There is no pause check here: every protocol path
-     *      that mints, burns or moves shares is `whenNotPaused`, and holder transfers are gated by the transfer
-     *      pause in `transfer()` / `transferFrom()`.
-     * @dev `seize()` and `seizeUnlockRequest()` call `ERC20Upgradeable._update()` directly to skip the freeze check
-     */
-    function _update(address from, address to, uint256 value) internal override {
-        _requireNotFrozen(from);
-        _requireNotFrozen(to);
-        ERC20Upgradeable._update(from, to, value);
-    }
-
-    /**
-     * @dev A frozen account cannot be granted a new allowance, but anyone may still set an allowance to zero,
-     *      so holders can revoke approvals they gave to a frozen account
-     */
-    function _approve(address owner, address spender, uint256 value, bool emitEvent) internal override {
-        if (value > 0) {
-            _requireNotFrozen(owner);
-            _requireNotFrozen(spender);
-        }
-        ERC20Upgradeable._approve(owner, spender, value, emitEvent);
-    }
-
-    /// @dev A frozen spender cannot use allowances it was given before it was frozen
-    function _spendAllowance(address owner, address spender, uint256 value) internal override {
-        _requireNotFrozen(spender);
-        ERC20Upgradeable._spendAllowance(owner, spender, value);
     }
 
     /**
