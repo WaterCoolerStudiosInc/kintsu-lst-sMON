@@ -86,7 +86,9 @@ contract StakedMonadV4UpgradeSafetyTest is Test, StakerFaker, DeployV1, UpgradeV
         assertEq(requestAfter.spotValue, requestBefore.spotValue, "Unlock value preserved");
         assertEq(requestAfter.batchId, requestBefore.batchId, "Unlock batch preserved");
         assertFalse(v4.isFrozen(ALICE), "Nobody starts frozen");
+        assertTrue(v4.hasRole(v4.ROLE_UNPAUSE(), ADMIN), "Upgrading admin becomes unpauser");
         assertTrue(v4.hasRole(v4.ROLE_FREEZER(), ADMIN), "Upgrading admin becomes freezer");
+        assertTrue(v4.hasRole(v4.ROLE_UNFREEZER(), ADMIN), "Upgrading admin becomes unfreezer");
         assertTrue(v4.hasRole(v4.ROLE_SEIZER(), ADMIN), "Upgrading admin becomes seizer");
     }
 
@@ -102,13 +104,17 @@ contract StakedMonadV4UpgradeSafetyTest is Test, StakerFaker, DeployV1, UpgradeV
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, MALLORY, defaultAdmin));
         v4.initializeFromV3();
 
+        assertFalse(v4.hasRole(v4.ROLE_UNPAUSE(), MALLORY));
         assertFalse(v4.hasRole(v4.ROLE_FREEZER(), MALLORY));
+        assertFalse(v4.hasRole(v4.ROLE_UNFREEZER(), MALLORY));
         assertFalse(v4.hasRole(v4.ROLE_SEIZER(), MALLORY));
 
         // The admin can still finish the upgrade
         vm.prank(ADMIN);
         v4.initializeFromV3();
+        assertTrue(v4.hasRole(v4.ROLE_UNPAUSE(), ADMIN));
         assertTrue(v4.hasRole(v4.ROLE_FREEZER(), ADMIN));
+        assertTrue(v4.hasRole(v4.ROLE_UNFREEZER(), ADMIN));
     }
 
     function test_only_upgrader_can_upgrade_to_v4() public {

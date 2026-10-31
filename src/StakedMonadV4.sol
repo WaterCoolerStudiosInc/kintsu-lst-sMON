@@ -30,14 +30,19 @@ import "./Registry.sol";
  *
  *         Changes in v4:
  *           * pause() now also halts every sMON transfer, mint and burn (same check as OpenZeppelin ERC20Pausable)
+ *           * unpause() now requires ROLE_UNPAUSE instead of ROLE_PAUSE, so a fast, lower-trust pauser key
+ *             cannot resume the contract mid-incident
  *           * ROLE_FREEZER can freeze an account: it can no longer send, receive, approve a new allowance,
  *             spend an allowance, request/cancel an unlock, or redeem
+ *           * ROLE_UNFREEZER can unfreeze an account. It is separate from ROLE_FREEZER so a fast, lower-trust
+ *             freezer key cannot release a frozen thief (and thereby block seizure)
  *           * ROLE_SEIZER can move a frozen account's sMON to a recovery address with seize()
  *           * ROLE_SEIZER can take over a frozen account's unlock request with seizeUnlockRequest():
  *             a request still in the open batch is cancelled and its shares go to the recovery address;
  *             a request already submitted (unbonding) is reassigned so the recovery address redeems it
  *           * Freezing, seizing and unfreezing work while paused
  *           * Removed initializeFromV2(); added initializeFromV3() which grants the new roles to the admin
+ *             (ROLE_UNPAUSE, ROLE_FREEZER, ROLE_UNFREEZER, ROLE_SEIZER)
  */
 contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUpgradeable, UUPSUpgradeable, ERC20Upgradeable, AccessControlUpgradeable, PausableUpgradeable {
     uint16 private constant BIPS = 100_00;
@@ -133,9 +138,11 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
 
     // Pause related roles
     bytes32 public constant ROLE_PAUSE = keccak256("ROLE_PAUSE");
+    bytes32 public constant ROLE_UNPAUSE = keccak256("ROLE_UNPAUSE");
 
     // Freeze and seize related roles
     bytes32 public constant ROLE_FREEZER = keccak256("ROLE_FREEZER");
+    bytes32 public constant ROLE_UNFREEZER = keccak256("ROLE_UNFREEZER");
     bytes32 public constant ROLE_SEIZER = keccak256("ROLE_SEIZER");
 
     uint256 public constant MINIMUM_CONTRIBUTE_THRESHOLD = 5_000 ether;
@@ -204,7 +211,9 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
 
         // Other roles managed by DEFAULT_ADMIN_ROLE
         AccessControlUpgradeable._grantRole(ROLE_PAUSE, admin);
+        AccessControlUpgradeable._grantRole(ROLE_UNPAUSE, admin);
         AccessControlUpgradeable._grantRole(ROLE_FREEZER, admin);
+        AccessControlUpgradeable._grantRole(ROLE_UNFREEZER, admin);
         AccessControlUpgradeable._grantRole(ROLE_SEIZER, admin);
 
         currentBatchId = 1;
@@ -218,12 +227,14 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
     }
 
     /**
-     * @dev Grants ROLE_FREEZER and ROLE_SEIZER to the caller, who must already hold DEFAULT_ADMIN_ROLE.
+     * @dev Grants ROLE_UNPAUSE, ROLE_FREEZER, ROLE_UNFREEZER and ROLE_SEIZER to the caller, who must already hold DEFAULT_ADMIN_ROLE.
      * @dev Meant to run atomically inside `upgradeToAndCall`, where the caller is the admin performing the upgrade.
      *      Restricting it to the admin means an upgrade made without the call cannot be front-run to grab the roles.
      */
     function initializeFromV3() external expectInitializedVersion(3) reinitializer(4) onlyRole(DEFAULT_ADMIN_ROLE) {
+        AccessControlUpgradeable._grantRole(ROLE_UNPAUSE, msg.sender);
         AccessControlUpgradeable._grantRole(ROLE_FREEZER, msg.sender);
+        AccessControlUpgradeable._grantRole(ROLE_UNFREEZER, msg.sender);
         AccessControlUpgradeable._grantRole(ROLE_SEIZER, msg.sender);
     }
 
@@ -245,7 +256,11 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
     function _authorizeFreeze(address account) internal view override onlyRole(ROLE_FREEZER) {
         if (account == address(0) || account == address(this)) revert InvalidAccount();
     }
-    function _authorizeUnfreeze(address) internal view override onlyRole(ROLE_FREEZER) {}
+    /**
+     * @dev Separate from ROLE_FREEZER: freezing only protects, but unfreezing a thief releases the funds and
+     *      makes them unseizable, so it can be kept on a higher-trust key than the freezer
+     */
+    function _authorizeUnfreeze(address) internal view override onlyRole(ROLE_UNFREEZER) {}
 
     /**
      * @notice Converts MON into LST shares at the current block timestamp
@@ -667,7 +682,11 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
         PausableUpgradeable._pause();
     }
 
-    function unpause() external onlyRole(ROLE_PAUSE) {
+    /**
+     * @dev Separate from ROLE_PAUSE: pausing only protects, but unpausing mid-incident lets an attacker move or
+     *      redeem again, so it can be kept on a higher-trust key than the pauser
+     */
+    function unpause() external onlyRole(ROLE_UNPAUSE) {
         PausableUpgradeable._unpause();
     }
 

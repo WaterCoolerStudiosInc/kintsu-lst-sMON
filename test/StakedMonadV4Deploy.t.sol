@@ -17,16 +17,82 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         return StakedMonadV4(payable(address(stakedMonad)));
     }
 
+    function test_pause_roles_granted_to_admin() public view {
+        assertTrue(v4().hasRole(v4().ROLE_PAUSE(), ADMIN), "Admin should be a pauser");
+        assertTrue(v4().hasRole(v4().ROLE_UNPAUSE(), ADMIN), "Admin should be an unpauser");
+    }
+
+    function test_pause_roles_managed_by_default_admin() public {
+        bytes32 unpauser = v4().ROLE_UNPAUSE();
+        bytes32 defaultAdmin = v4().DEFAULT_ADMIN_ROLE();
+        assertEq(v4().getRoleAdmin(v4().ROLE_PAUSE()), defaultAdmin);
+        assertEq(v4().getRoleAdmin(unpauser), defaultAdmin);
+
+        // An unpauser cannot hand out its own role
+        vm.prank(ADMIN);
+        v4().grantRole(unpauser, ALICE);
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, ALICE, defaultAdmin));
+        v4().grantRole(unpauser, BOB);
+    }
+
+    function test_only_unpauser_can_unpause() public {
+        vm.prank(ADMIN);
+        stakedMonad.pause();
+
+        bytes32 role = v4().ROLE_UNPAUSE();
+        vm.prank(BOB);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
+        stakedMonad.unpause();
+    }
+
+    /// @notice A pauser-only key (e.g. a fast monitoring bot) cannot resume the contract
+    function test_pauser_cannot_unpause() public {
+        bytes32 pauser = v4().ROLE_PAUSE();
+        bytes32 unpauser = v4().ROLE_UNPAUSE();
+        vm.prank(ADMIN);
+        v4().grantRole(pauser, CHARLIE);
+
+        vm.prank(CHARLIE);
+        stakedMonad.pause();
+
+        vm.prank(CHARLIE);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, unpauser));
+        stakedMonad.unpause();
+        assertTrue(stakedMonad.paused(), "Still paused");
+    }
+
+    /// @notice An unpauser-only key cannot pause
+    function test_unpauser_cannot_pause() public {
+        bytes32 pauser = v4().ROLE_PAUSE();
+        bytes32 unpauser = v4().ROLE_UNPAUSE();
+        vm.prank(ADMIN);
+        v4().grantRole(unpauser, CHARLIE);
+
+        vm.prank(CHARLIE);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, pauser));
+        stakedMonad.pause();
+
+        vm.prank(ADMIN);
+        stakedMonad.pause();
+        vm.prank(CHARLIE);
+        stakedMonad.unpause();
+        assertFalse(stakedMonad.paused(), "Unpaused by the unpauser");
+    }
+
     function test_freeze_and_seize_roles_granted_to_admin() public view {
         assertTrue(v4().hasRole(v4().ROLE_FREEZER(), ADMIN), "Admin should be a freezer");
+        assertTrue(v4().hasRole(v4().ROLE_UNFREEZER(), ADMIN), "Admin should be an unfreezer");
         assertTrue(v4().hasRole(v4().ROLE_SEIZER(), ADMIN), "Admin should be a seizer");
     }
 
     function test_freeze_and_seize_roles_managed_by_default_admin() public {
         bytes32 freezer = v4().ROLE_FREEZER();
+        bytes32 unfreezer = v4().ROLE_UNFREEZER();
         bytes32 seizer = v4().ROLE_SEIZER();
         bytes32 defaultAdmin = v4().DEFAULT_ADMIN_ROLE();
         assertEq(v4().getRoleAdmin(freezer), defaultAdmin);
+        assertEq(v4().getRoleAdmin(unfreezer), defaultAdmin);
         assertEq(v4().getRoleAdmin(seizer), defaultAdmin);
 
         // A freezer cannot hand out the role on its own
@@ -37,18 +103,66 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().grantRole(freezer, BOB);
     }
 
-    function test_only_freezer_can_freeze_and_unfreeze() public {
+    function test_only_freezer_can_freeze() public {
         bytes32 role = v4().ROLE_FREEZER();
-        vm.startPrank(BOB);
+        vm.prank(BOB);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
         v4().freeze(ALICE);
+    }
 
-        vm.startPrank(ADMIN);
+    function test_only_unfreezer_can_unfreeze() public {
+        vm.prank(ADMIN);
         v4().freeze(ALICE);
 
-        vm.startPrank(BOB);
+        bytes32 role = v4().ROLE_UNFREEZER();
+        vm.prank(BOB);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
         v4().unfreeze(ALICE);
+    }
+
+    /// @notice A freezer-only key (e.g. a fast monitoring bot) cannot release a frozen account
+    function test_freezer_cannot_unfreeze() public {
+        bytes32 freezer = v4().ROLE_FREEZER();
+        bytes32 unfreezer = v4().ROLE_UNFREEZER();
+        vm.prank(ADMIN);
+        v4().grantRole(freezer, CHARLIE);
+
+        vm.prank(CHARLIE);
+        v4().freeze(ALICE);
+
+        vm.prank(CHARLIE);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, unfreezer));
+        v4().unfreeze(ALICE);
+        assertTrue(v4().isFrozen(ALICE), "Still frozen");
+    }
+
+    /// @notice An unfreezer-only key cannot freeze
+    function test_unfreezer_cannot_freeze() public {
+        bytes32 freezer = v4().ROLE_FREEZER();
+        bytes32 unfreezer = v4().ROLE_UNFREEZER();
+        vm.prank(ADMIN);
+        v4().grantRole(unfreezer, CHARLIE);
+
+        vm.prank(CHARLIE);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, freezer));
+        v4().freeze(ALICE);
+
+        vm.prank(ADMIN);
+        v4().freeze(ALICE);
+        vm.prank(CHARLIE);
+        v4().unfreeze(ALICE);
+        assertFalse(v4().isFrozen(ALICE), "Unfrozen by the unfreezer");
+    }
+
+    /// @notice An unfreezer cannot hand out its own role
+    function test_unfreezer_cannot_grant_unfreezer() public {
+        bytes32 unfreezer = v4().ROLE_UNFREEZER();
+        bytes32 defaultAdmin = v4().DEFAULT_ADMIN_ROLE();
+        vm.prank(ADMIN);
+        v4().grantRole(unfreezer, ALICE);
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, ALICE, defaultAdmin));
+        v4().grantRole(unfreezer, BOB);
     }
 
     function test_only_seizer_can_seize() public {

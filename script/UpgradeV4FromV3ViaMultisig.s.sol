@@ -6,7 +6,7 @@ import "../src/StakedMonadV4.sol";
 
 /**
  * @notice Deploys the StakedMonadV4 implementation and prints calldata used for a multisig proposal.
- * @dev The Safe executing the proposal must hold ROLE_UPGRADE and DEFAULT_ADMIN_ROLE; it receives ROLE_FREEZER and ROLE_SEIZER.
+ * @dev The Safe executing the proposal must hold ROLE_UPGRADE and DEFAULT_ADMIN_ROLE; it receives ROLE_UNPAUSE, ROLE_FREEZER, ROLE_UNFREEZER and ROLE_SEIZER.
  * @dev These environment variables are used:
  *     - PRIVATE_KEY:  Private key of the deploying account (only used when IMPL is not set)
  *     - IMPL:         Optional address of an already deployed StakedMonadV4 (default deploys a new one)
