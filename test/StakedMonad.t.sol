@@ -36,7 +36,7 @@ contract StakedMonadTest is Test, DeployV1, StakerFaker {
         stakedMonad = StakedMonad(payable(proxy));
     }
 
-    function test_roles_self_managed() public {
+    function test_roles_self_managed() public virtual {
         bytes32[] memory roles = new bytes32[](4);
         roles[0] = stakedMonad.ROLE_FEE_SETTER();
         roles[1] = stakedMonad.ROLE_FEE_CLAIMER();

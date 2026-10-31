@@ -1,5 +1,5 @@
 {
-  "version": "2.2.0",
+  "version": "2.3.0",
   "name": "@water-cooler-studios/monad-contracts-core",
   "description": "Smart contracts and deployments for Monad",
   "type": "module",
@@ -10,6 +10,7 @@
     "out/StakedMonad.sol/*",
     "out/SplitterFactory.sol/*",
     "out/Splitter.sol/Splitter.json",
+    "out/TimelockController.sol/*",
     "!out/*/31337_deployment.json"
   ]
 }
