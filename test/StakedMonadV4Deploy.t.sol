@@ -585,7 +585,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().seize(ALICE, address(0));
         vm.expectRevert(StakedMonadV4.InvalidAccount.selector);
         v4().seize(ALICE, address(stakedMonad));
-        vm.expectRevert(StakedMonadV4.InvalidAccount.selector);
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
         v4().seize(ALICE, ALICE);
         vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, CHARLIE));
         v4().seize(ALICE, CHARLIE);
@@ -694,7 +694,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().seizeUnlockRequest(ALICE, 0, RECOVERY);
 
         v4().freeze(ALICE);
-        vm.expectRevert(StakedMonadV4.InvalidAccount.selector);
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
         v4().seizeUnlockRequest(ALICE, 0, ALICE);
         vm.expectRevert(stdError.indexOOBError);
         v4().seizeUnlockRequest(ALICE, 1, RECOVERY);

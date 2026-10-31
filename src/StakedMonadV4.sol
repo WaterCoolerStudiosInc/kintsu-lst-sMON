@@ -960,10 +960,14 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
         ERC20Upgradeable._spendAllowance(owner, spender, value);
     }
 
-    /// @dev Seizing requires a frozen source and a usable, different, unfrozen recipient
+    /**
+     * @dev Seizing requires a frozen source and an unfrozen recipient other than the zero address or this contract
+     * @dev Those two can never be frozen, so they need an explicit check. `to == account` needs none: `account` is
+     *      frozen, so `_requireNotFrozen(to)` rejects it
+     */
     function _requireSeizable(address account, address to) private view {
         _requireFrozen(account);
-        if (to == address(0) || to == address(this) || to == account) revert InvalidAccount();
+        if (to == address(0) || to == address(this)) revert InvalidAccount();
         _requireNotFrozen(to);
     }
 
