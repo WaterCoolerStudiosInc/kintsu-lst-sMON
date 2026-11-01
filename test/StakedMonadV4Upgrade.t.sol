@@ -22,6 +22,11 @@ contract StakedMonadV4UpgradeTest is StakedMonadV4Tests, UpgradeV2FromV1, Upgrad
         UpgradeV2FromV1.upgradeV2FromV1(address(stakedMonad));
         UpgradeV3FromV2.upgradeV3FromV2(address(stakedMonad), new uint64[](0));
         UpgradeV4FromV3.upgradeV4FromV3(address(stakedMonad));
+
+        // The upgrade leaves both pauses set (see StakedMonadV4UpgradeSafetyTest); the inherited
+        // suite expects a running protocol, as an operator would after reviewing the state
+        StakedMonadV4(payable(stakedMonad)).unpauseProtocol();
+        StakedMonadV4(payable(stakedMonad)).unpauseTransfers();
         vm.stopPrank();
     }
 
@@ -87,9 +92,51 @@ contract StakedMonadV4UpgradeSafetyTest is Test, StakerFaker, DeployV1, UpgradeV
         assertEq(requestAfter.batchId, requestBefore.batchId, "Unlock batch preserved");
         assertFalse(v4.isFrozen(ALICE), "Nobody starts frozen");
         assertTrue(v4.hasRole(v4.ROLE_UNPAUSE(), ADMIN), "Upgrading admin becomes unpauser");
-        assertTrue(v4.hasRole(v4.ROLE_FREEZER(), ADMIN), "Upgrading admin becomes freezer");
-        assertTrue(v4.hasRole(v4.ROLE_UNFREEZER(), ADMIN), "Upgrading admin becomes unfreezer");
-        assertTrue(v4.hasRole(v4.ROLE_SEIZER(), ADMIN), "Upgrading admin becomes seizer");
+        assertTrue(v4.hasRole(v4.ROLE_FREEZE(), ADMIN), "Upgrading admin becomes freezer");
+        assertTrue(v4.hasRole(v4.ROLE_UNFREEZE(), ADMIN), "Upgrading admin becomes unfreezer");
+        assertTrue(v4.hasRole(v4.ROLE_SEIZE(), ADMIN), "Upgrading admin becomes seizer");
+    }
+
+    /// @notice The upgrade itself halts the protocol and transfers, so nothing moves before the admin reviews state
+    function test_upgrade_leaves_protocol_and_transfers_paused() public {
+        _upgradeAsAdmin();
+
+        StakedMonadV4 v4 = StakedMonadV4(payable(stakedMonad));
+        assertTrue(v4.paused(), "Protocol paused by the upgrade");
+        assertTrue(v4.protocolPaused(), "protocolPaused() agrees");
+        assertTrue(v4.transfersPaused(), "Transfers paused by the upgrade");
+
+        vm.startPrank(ADMIN);
+        v4.unpauseProtocol();
+        v4.unpauseTransfers();
+        vm.stopPrank();
+        assertFalse(v4.paused());
+        assertFalse(v4.transfersPaused());
+    }
+
+    /// @notice An upgrade run while V3 was already paused still ends with both pauses set
+    function test_upgrade_from_paused_v3_keeps_both_pauses() public {
+        vm.prank(ADMIN);
+        stakedMonad.pause();
+        assertTrue(stakedMonad.paused(), "V3 paused before the upgrade");
+
+        _upgradeAsAdmin();
+
+        StakedMonadV4 v4 = StakedMonadV4(payable(stakedMonad));
+        assertTrue(v4.paused(), "Still paused after the upgrade");
+        assertTrue(v4.transfersPaused(), "Transfers paused by the upgrade");
+    }
+
+    /// @notice The new roles come out of the upgrade managed by the default admin
+    function test_upgrade_leaves_new_roles_admin_managed() public {
+        _upgradeAsAdmin();
+
+        StakedMonadV4 v4 = StakedMonadV4(payable(stakedMonad));
+        bytes32 defaultAdmin = v4.DEFAULT_ADMIN_ROLE();
+        assertEq(v4.getRoleAdmin(v4.ROLE_FREEZE()), defaultAdmin);
+        assertEq(v4.getRoleAdmin(v4.ROLE_UNFREEZE()), defaultAdmin);
+        assertEq(v4.getRoleAdmin(v4.ROLE_SEIZE()), defaultAdmin);
+        assertEq(v4.getRoleAdmin(v4.ROLE_UNPAUSE()), defaultAdmin);
     }
 
     /// @notice If the implementation is swapped without the init call, a stranger still cannot claim the roles
@@ -105,16 +152,16 @@ contract StakedMonadV4UpgradeSafetyTest is Test, StakerFaker, DeployV1, UpgradeV
         v4.initializeFromV3();
 
         assertFalse(v4.hasRole(v4.ROLE_UNPAUSE(), MALLORY));
-        assertFalse(v4.hasRole(v4.ROLE_FREEZER(), MALLORY));
-        assertFalse(v4.hasRole(v4.ROLE_UNFREEZER(), MALLORY));
-        assertFalse(v4.hasRole(v4.ROLE_SEIZER(), MALLORY));
+        assertFalse(v4.hasRole(v4.ROLE_FREEZE(), MALLORY));
+        assertFalse(v4.hasRole(v4.ROLE_UNFREEZE(), MALLORY));
+        assertFalse(v4.hasRole(v4.ROLE_SEIZE(), MALLORY));
 
         // The admin can still finish the upgrade
         vm.prank(ADMIN);
         v4.initializeFromV3();
         assertTrue(v4.hasRole(v4.ROLE_UNPAUSE(), ADMIN));
-        assertTrue(v4.hasRole(v4.ROLE_FREEZER(), ADMIN));
-        assertTrue(v4.hasRole(v4.ROLE_UNFREEZER(), ADMIN));
+        assertTrue(v4.hasRole(v4.ROLE_FREEZE(), ADMIN));
+        assertTrue(v4.hasRole(v4.ROLE_UNFREEZE(), ADMIN));
     }
 
     function test_only_upgrader_can_upgrade_to_v4() public {

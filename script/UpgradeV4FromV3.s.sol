@@ -6,7 +6,8 @@ import "../src/StakedMonadV4.sol";
 
 /**
  * @notice Upgrades StakedMonad proxy from V3 to V4
- * @dev The broadcasting account must hold ROLE_UPGRADE and DEFAULT_ADMIN_ROLE; it receives ROLE_UNPAUSE, ROLE_FREEZER, ROLE_UNFREEZER and ROLE_SEIZER.
+ * @dev The broadcasting account must hold ROLE_UPGRADE and DEFAULT_ADMIN_ROLE; it receives ROLE_UNPAUSE, ROLE_FREEZE, ROLE_UNFREEZE and ROLE_SEIZE.
+ * @dev The upgrade activates both the protocol pause and the transfer pause
  *      On mainnet the admin is a Safe, so use UpgradeV4FromV3ViaMultisig instead.
  * @dev These environment variables are used:
  *     - PRIVATE_KEY:  Private key of the upgrading account

@@ -90,15 +90,16 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
     }
 
     function test_freeze_and_seize_roles_granted_to_admin() public view {
-        assertTrue(v4().hasRole(v4().ROLE_FREEZER(), ADMIN), "Admin should be a freezer");
-        assertTrue(v4().hasRole(v4().ROLE_UNFREEZER(), ADMIN), "Admin should be an unfreezer");
-        assertTrue(v4().hasRole(v4().ROLE_SEIZER(), ADMIN), "Admin should be a seizer");
+        assertTrue(v4().hasRole(v4().ROLE_FREEZE(), ADMIN), "Admin should be a freezer");
+        assertTrue(v4().hasRole(v4().ROLE_UNFREEZE(), ADMIN), "Admin should be an unfreezer");
+        assertTrue(v4().hasRole(v4().ROLE_SEIZE(), ADMIN), "Admin should be a seizer");
     }
 
+    /// @notice Freeze, unfreeze and seize are all handed out and revoked by the default admin
     function test_freeze_and_seize_roles_managed_by_default_admin() public {
-        bytes32 freezer = v4().ROLE_FREEZER();
-        bytes32 unfreezer = v4().ROLE_UNFREEZER();
-        bytes32 seizer = v4().ROLE_SEIZER();
+        bytes32 freezer = v4().ROLE_FREEZE();
+        bytes32 unfreezer = v4().ROLE_UNFREEZE();
+        bytes32 seizer = v4().ROLE_SEIZE();
         bytes32 defaultAdmin = v4().DEFAULT_ADMIN_ROLE();
         assertEq(v4().getRoleAdmin(freezer), defaultAdmin);
         assertEq(v4().getRoleAdmin(unfreezer), defaultAdmin);
@@ -110,10 +111,38 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         vm.prank(ALICE);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, ALICE, defaultAdmin));
         v4().grantRole(freezer, BOB);
+
+        // A seizer cannot hand out the role on its own, and the admin can revoke it
+        vm.prank(ADMIN);
+        v4().grantRole(seizer, ALICE);
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, ALICE, defaultAdmin));
+        v4().grantRole(seizer, BOB);
+
+        vm.prank(ADMIN);
+        v4().revokeRole(seizer, ALICE);
+        assertFalse(v4().hasRole(seizer, ALICE), "Admin can revoke a compromised seizer");
+    }
+
+    /// @notice A compromised freezer key cannot revoke the admin's own freeze power
+    function test_freezer_cannot_revoke_the_admin() public {
+        bytes32 freezer = v4().ROLE_FREEZE();
+        bytes32 defaultAdmin = v4().DEFAULT_ADMIN_ROLE();
+        vm.prank(ADMIN);
+        v4().grantRole(freezer, CHARLIE);
+
+        vm.prank(CHARLIE);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, CHARLIE, defaultAdmin));
+        v4().revokeRole(freezer, ADMIN);
+        assertTrue(v4().hasRole(freezer, ADMIN), "Admin keeps the freeze role");
+
+        vm.prank(ADMIN);
+        v4().revokeRole(freezer, CHARLIE);
+        assertFalse(v4().hasRole(freezer, CHARLIE), "Admin can revoke a compromised freezer");
     }
 
     function test_only_freezer_can_freeze() public {
-        bytes32 role = v4().ROLE_FREEZER();
+        bytes32 role = v4().ROLE_FREEZE();
         vm.prank(BOB);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
         v4().freeze(ALICE);
@@ -123,7 +152,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         vm.prank(ADMIN);
         v4().freeze(ALICE);
 
-        bytes32 role = v4().ROLE_UNFREEZER();
+        bytes32 role = v4().ROLE_UNFREEZE();
         vm.prank(BOB);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
         v4().unfreeze(ALICE);
@@ -131,8 +160,8 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
 
     /// @notice A freezer-only key (e.g. a fast monitoring bot) cannot release a frozen account
     function test_freezer_cannot_unfreeze() public {
-        bytes32 freezer = v4().ROLE_FREEZER();
-        bytes32 unfreezer = v4().ROLE_UNFREEZER();
+        bytes32 freezer = v4().ROLE_FREEZE();
+        bytes32 unfreezer = v4().ROLE_UNFREEZE();
         vm.prank(ADMIN);
         v4().grantRole(freezer, CHARLIE);
 
@@ -147,8 +176,8 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
 
     /// @notice An unfreezer-only key cannot freeze
     function test_unfreezer_cannot_freeze() public {
-        bytes32 freezer = v4().ROLE_FREEZER();
-        bytes32 unfreezer = v4().ROLE_UNFREEZER();
+        bytes32 freezer = v4().ROLE_FREEZE();
+        bytes32 unfreezer = v4().ROLE_UNFREEZE();
         vm.prank(ADMIN);
         v4().grantRole(unfreezer, CHARLIE);
 
@@ -165,7 +194,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
 
     /// @notice An unfreezer cannot hand out its own role
     function test_unfreezer_cannot_grant_unfreezer() public {
-        bytes32 unfreezer = v4().ROLE_UNFREEZER();
+        bytes32 unfreezer = v4().ROLE_UNFREEZE();
         bytes32 defaultAdmin = v4().DEFAULT_ADMIN_ROLE();
         vm.prank(ADMIN);
         v4().grantRole(unfreezer, ALICE);
@@ -174,15 +203,15 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().grantRole(unfreezer, BOB);
     }
 
-    function test_only_seizer_can_seize() public {
+    function test_only_seizer_can_seizeBalance() public {
         _depositAs(ALICE, DEPOSIT);
         vm.prank(ADMIN);
         v4().freeze(ALICE);
 
-        bytes32 role = v4().ROLE_SEIZER();
+        bytes32 role = v4().ROLE_SEIZE();
         vm.startPrank(BOB);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
-        v4().seize(ALICE, BOB);
+        v4().seizeBalance(ALICE, BOB);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
         v4().seizeUnlockRequest(ALICE, 0, BOB);
     }
@@ -559,7 +588,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(ALICE);
         vm.expectEmit(true, true, false, true, address(stakedMonad));
         emit StakedMonadV4.Seized(ALICE, RECOVERY, shares);
-        v4().seize(ALICE, RECOVERY);
+        v4().seizeBalance(ALICE, RECOVERY);
 
         assertEq(stakedMonad.balanceOf(ALICE), 0, "Frozen account emptied");
         assertEq(stakedMonad.balanceOf(RECOVERY), shares, "Recovery receives the shares");
@@ -572,7 +601,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         _depositAs(ALICE, DEPOSIT);
         vm.prank(ADMIN);
         vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountNotFrozen.selector, ALICE));
-        v4().seize(ALICE, RECOVERY);
+        v4().seizeBalance(ALICE, RECOVERY);
     }
 
     function test_seize_rejects_bad_recipients() public {
@@ -582,20 +611,20 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(CHARLIE);
 
         vm.expectRevert(StakedMonadV4.InvalidAccount.selector);
-        v4().seize(ALICE, address(0));
+        v4().seizeBalance(ALICE, address(0));
         vm.expectRevert(StakedMonadV4.InvalidAccount.selector);
-        v4().seize(ALICE, address(stakedMonad));
+        v4().seizeBalance(ALICE, address(stakedMonad));
         vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
-        v4().seize(ALICE, ALICE);
+        v4().seizeBalance(ALICE, ALICE);
         vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, CHARLIE));
-        v4().seize(ALICE, CHARLIE);
+        v4().seizeBalance(ALICE, CHARLIE);
     }
 
     function test_seize_reverts_on_empty_balance() public {
         vm.startPrank(ADMIN);
         v4().freeze(ALICE);
         vm.expectRevert(CustomErrors.NoChange.selector);
-        v4().seize(ALICE, RECOVERY);
+        v4().seizeBalance(ALICE, RECOVERY);
     }
 
     function test_freeze_and_seize_work_while_paused() public {
@@ -604,7 +633,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         vm.startPrank(ADMIN);
         v4().pauseProtocol();
         v4().freeze(ALICE);
-        v4().seize(ALICE, RECOVERY);
+        v4().seizeBalance(ALICE, RECOVERY);
         v4().unfreeze(ALICE);
         assertEq(stakedMonad.balanceOf(RECOVERY), shares);
     }
@@ -618,7 +647,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         vm.startPrank(ADMIN);
         v4().pauseProtocolAndTransfers();
         v4().freeze(ALICE);
-        v4().seize(ALICE, RECOVERY);
+        v4().seizeBalance(ALICE, RECOVERY);
         v4().seizeUnlockRequest(ALICE, 0, RECOVERY);
         v4().unfreeze(ALICE);
         assertEq(stakedMonad.balanceOf(RECOVERY), shares, "Balance and escrowed unlock both recovered");
