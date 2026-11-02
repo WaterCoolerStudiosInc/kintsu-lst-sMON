@@ -620,11 +620,53 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().seizeBalance(ALICE, CHARLIE);
     }
 
-    function test_seize_reverts_on_empty_balance() public {
+    /// @notice An empty balance is a no-op, so a batched incident response is not sunk by an account holding no sMON
+    function test_seize_empty_balance_is_a_silent_noop() public {
         vm.startPrank(ADMIN);
         v4().freeze(ALICE);
-        vm.expectRevert(CustomErrors.NoChange.selector);
+
+        uint256 supplyBefore = stakedMonad.totalSupply();
+        vm.recordLogs();
         v4().seizeBalance(ALICE, RECOVERY);
+
+        assertEq(vm.getRecordedLogs().length, 0, "Nothing seized, so nothing emitted");
+        assertEq(stakedMonad.balanceOf(ALICE), 0, "Frozen account still empty");
+        assertEq(stakedMonad.balanceOf(RECOVERY), 0, "Recovery receives nothing");
+        assertEq(stakedMonad.totalSupply(), supplyBefore, "Supply untouched");
+        assertTrue(v4().isFrozen(ALICE), "Account stays frozen");
+    }
+
+    /// @notice The mainnet shape: every stolen share is escrowed in an unlock request, so `balanceOf` is zero.
+    ///         `freeze` + `seizeBalance` + `seizeUnlockRequests` must run start to finish as one batch.
+    function test_seize_batch_recovers_when_balance_is_fully_escrowed() public {
+        uint96 shares = _depositAs(ALICE, DEPOSIT);
+        vm.prank(ALICE);
+        stakedMonad.requestUnlock(shares, 0);
+        assertEq(stakedMonad.balanceOf(ALICE), 0, "Test setup: all sMON escrowed, loose balance is zero");
+
+        vm.startPrank(ADMIN);
+        v4().freeze(ALICE);
+        v4().seizeBalance(ALICE, RECOVERY);
+        v4().seizeUnlockRequests(ALICE, type(uint256).max, RECOVERY);
+        vm.stopPrank();
+
+        assertEq(stakedMonad.balanceOf(RECOVERY), shares, "Escrowed shares recovered despite the empty balance");
+        assertEq(v4().getAllUserUnlockRequests(ALICE).length, 0, "Thief has nothing left");
+    }
+
+    /// @notice The empty-balance no-op must not weaken the checks that run before it
+    function test_seize_empty_balance_still_enforces_frozen_and_recipient() public {
+        vm.startPrank(ADMIN);
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountNotFrozen.selector, ALICE));
+        v4().seizeBalance(ALICE, RECOVERY);
+
+        v4().freeze(ALICE);
+        vm.expectRevert(StakedMonadV4.InvalidAccount.selector);
+        v4().seizeBalance(ALICE, address(0));
+        vm.expectRevert(StakedMonadV4.InvalidAccount.selector);
+        v4().seizeBalance(ALICE, address(stakedMonad));
+        vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
+        v4().seizeBalance(ALICE, ALICE);
     }
 
     function test_freeze_and_seize_work_while_paused() public {

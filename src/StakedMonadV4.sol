@@ -730,16 +730,16 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
     /**
      * @notice Move the entire sMON balance of a frozen account to `to`
      * @dev Shares are transferred, never burnt: burning would raise the redemption ratio for every other holder
-     *      instead of returning value to whoever was robbed
-     * @dev Works while paused
      * @dev `to` should be a fresh address. Returning funds to a wallet that still carries the thief's approvals
      *      or delegations lets them be taken again.
+     * @dev A zero balance is a no-op rather than a revert
+     * @dev Works while paused
      */
     function seizeBalance(address account, address to) external onlyRole(ROLE_SEIZE) {
         _requireSeizable(account, to);
 
         uint256 shares = ERC20Upgradeable.balanceOf(account);
-        if (shares == 0) revert NoChange();
+        if (shares == 0) return;
 
         // Call the base implementation directly to bypass the freeze check in `_update()`
         ERC20Upgradeable._update(account, to, shares);
