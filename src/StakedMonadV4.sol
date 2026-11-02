@@ -45,9 +45,7 @@ import "./Registry.sol";
  *           * ROLE_UNFREEZE can unfreeze an account. It is separate from ROLE_FREEZE so a fast, lower-trust
  *             freezer key cannot release a frozen thief (and thereby block seizure)
  *           * ROLE_SEIZE can move a frozen account's sMON to a recovery address with seizeBalance()
- *           * ROLE_SEIZE can take over a frozen account's unlock request with seizeUnlockRequest():
- *             a request still in the open batch is cancelled and its shares go to the recovery address;
- *             a request already submitted (unbonding) is reassigned so the recovery address redeems it
+ *           * ROLE_SEIZE can take over a frozen account's unlock requests with seizeUnlockRequests()
  *           * Freezing, seizing and unfreezing work while paused and while transfers are paused
  */
 contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUpgradeable, TransferPausableUpgradeable, UUPSUpgradeable, ERC20Upgradeable, AccessControlUpgradeable, PausableUpgradeable {
@@ -750,33 +748,43 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
     }
 
     /**
-     * @notice Take over one unlock request of a frozen account
+     * @notice Take over the unlock requests of a frozen account, newest first
      * @notice A request still in the open batch is cancelled and its shares (exit fee included) go to `to`
      * @notice A request whose batch was already submitted (unbonding) moves to `to`, who redeems it as usual
+     * @notice `unlocksCount` caps how many requests are taken in one call
      * @dev Works while paused, although redeeming a reassigned request still requires the contract to be unpaused
-     * @dev Order of the frozen account's unlock requests is not preserved, as with cancellations
      */
-    function seizeUnlockRequest(address account, uint256 unlockIndex, address to) external onlyRole(ROLE_SEIZE) {
+    function seizeUnlockRequests(address account, uint256 unlocksCount, address to) external onlyRole(ROLE_SEIZE) {
         _requireSeizable(account, to);
 
-        // Intentional panic on out-of-bounds access, as it's more gas-efficient than an explicit length check
         UnlockRequest[] storage userUnlockRequestArray = userUnlockRequests[account];
-        UnlockRequest memory userUnlockRequest = userUnlockRequestArray[unlockIndex]; // shadow (SLOAD 1 slot)
+        uint256 unlockIndex = userUnlockRequestArray.length;
 
-        if (userUnlockRequest.batchId == currentBatchId) {
-            // Batch not submitted yet: cancel the request and hand its escrowed shares to `to`
-            uint96 shares = _removeOpenUnlockRequest(account, unlockIndex);
+        uint256 seized = unlocksCount < unlockIndex ? unlocksCount : unlockIndex;
+        if (seized == 0) revert NoChange();
 
-            // Call the base implementation directly to bypass the freeze check in `_update()`
-            ERC20Upgradeable._update(address(this), to, shares);
+        uint40 _currentBatchId = currentBatchId; // shadow
 
-            emit UnlockRequestSeized(account, unlockIndex, to, shares, userUnlockRequest.spotValue, false);
-        } else {
-            // Batch submitted: shares are already burnt and MON is unbonding, so `to` takes over the claim
-            _deleteUnlockRequest(userUnlockRequestArray, unlockIndex);
-            userUnlockRequests[to].push(userUnlockRequest);
+        for (uint256 i = 0; i < seized; ++i) {
+            // Always the final element, so removal is a pop with no copy
+            --unlockIndex;
+            UnlockRequest memory userUnlockRequest = userUnlockRequestArray[unlockIndex]; // shadow (SLOAD 1 slot)
 
-            emit UnlockRequestSeized(account, unlockIndex, to, userUnlockRequest.shares, userUnlockRequest.spotValue, true);
+            if (userUnlockRequest.batchId == _currentBatchId) {
+                // Batch not submitted yet: cancel the request and hand its escrow shares to `to`
+                uint96 shares = _removeOpenUnlockRequest(account, unlockIndex);
+
+                // Call the base implementation directly to bypass the freeze check in `_update()`
+                ERC20Upgradeable._update(address(this), to, shares);
+
+                emit UnlockRequestSeized(account, unlockIndex, to, shares, userUnlockRequest.spotValue, false);
+            } else {
+                // Batch submitted: shares are already burnt and MON is unbonding, so `to` takes over the claim
+                _deleteUnlockRequest(userUnlockRequestArray, unlockIndex);
+                userUnlockRequests[to].push(userUnlockRequest);
+
+                emit UnlockRequestSeized(account, unlockIndex, to, userUnlockRequest.shares, userUnlockRequest.spotValue, true);
+            }
         }
     }
 
@@ -801,7 +809,7 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
      * @dev Freeze check blocks frozen senders and recipients. There is no pause check here: every protocol path
      *      that mints, burns or moves shares is `whenNotPaused`, and holder transfers are gated by the transfer
      *      pause in `transfer()` / `transferFrom()`.
-     * @dev `seizeBalance()` and `seizeUnlockRequest()` call `ERC20Upgradeable._update()` directly to skip the freeze check
+     * @dev `seizeBalance()` and `seizeUnlockRequests()` call `ERC20Upgradeable._update()` directly to skip the freeze check
      */
     function _update(address from, address to, uint256 value) internal override {
         _requireNotFrozen(from);

@@ -213,7 +213,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
         v4().seizeBalance(ALICE, BOB);
         vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, BOB, role));
-        v4().seizeUnlockRequest(ALICE, 0, BOB);
+        v4().seizeUnlockRequests(ALICE, 1, BOB);
     }
 
     function test_freeze_rejects_zero_address_and_contract() public {
@@ -648,7 +648,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().pauseProtocolAndTransfers();
         v4().freeze(ALICE);
         v4().seizeBalance(ALICE, RECOVERY);
-        v4().seizeUnlockRequest(ALICE, 0, RECOVERY);
+        v4().seizeUnlockRequests(ALICE, 1, RECOVERY);
         v4().unfreeze(ALICE);
         assertEq(stakedMonad.balanceOf(RECOVERY), shares, "Balance and escrowed unlock both recovered");
         assertEq(stakedMonad.balanceOf(ALICE), 0);
@@ -656,7 +656,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
     }
 
     /// @notice Request still in the open batch: cancel it and hand every escrowed share (fee included) to recovery
-    function test_seizeUnlockRequest_open_batch_returns_shares() public {
+    function test_seizeUnlockRequests_open_batch_returns_shares() public {
         uint96 shares = _depositAs(ALICE, DEPOSIT);
         vm.prank(ALICE);
         stakedMonad.requestUnlock(shares, 0);
@@ -669,7 +669,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(ALICE);
         vm.expectEmit(true, true, false, true, address(stakedMonad));
         emit StakedMonadV4.UnlockRequestSeized(ALICE, 0, RECOVERY, shares, request.spotValue, false);
-        v4().seizeUnlockRequest(ALICE, 0, RECOVERY);
+        v4().seizeUnlockRequests(ALICE, 1, RECOVERY);
 
         assertEq(stakedMonad.balanceOf(RECOVERY), shares, "Recovery receives all escrowed shares");
         assertEq(v4().getAllUserUnlockRequests(ALICE).length, 0, "Request removed from frozen account");
@@ -681,7 +681,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
     }
 
     /// @notice Request already submitted (unbonding): recovery takes over the claim and redeems the MON
-    function test_seizeUnlockRequest_submitted_batch_reassigns_claim() public {
+    function test_seizeUnlockRequests_submitted_batch_reassigns_claim() public {
         uint96 shares = _depositAs(ALICE, DEPOSIT);
         vm.prank(ALICE);
         stakedMonad.requestUnlock(shares, 0);
@@ -692,7 +692,7 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         v4().freeze(ALICE);
         vm.expectEmit(true, true, false, true, address(stakedMonad));
         emit StakedMonadV4.UnlockRequestSeized(ALICE, 0, RECOVERY, request.shares, request.spotValue, true);
-        v4().seizeUnlockRequest(ALICE, 0, RECOVERY);
+        v4().seizeUnlockRequests(ALICE, 1, RECOVERY);
         vm.stopPrank();
 
         assertEq(v4().getAllUserUnlockRequests(ALICE).length, 0, "Claim removed from frozen account");
@@ -713,37 +713,122 @@ abstract contract StakedMonadV4Tests is StakedMonadV3Tests {
         stakedMonad.redeem(0, ALICE);
     }
 
-    function test_seizeUnlockRequest_requires_frozen_and_valid_recipient() public {
+    function test_seizeUnlockRequests_requires_frozen_and_valid_recipient() public {
         uint96 shares = _depositAs(ALICE, DEPOSIT);
         vm.prank(ALICE);
         stakedMonad.requestUnlock(shares, 0);
 
         vm.startPrank(ADMIN);
         vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountNotFrozen.selector, ALICE));
-        v4().seizeUnlockRequest(ALICE, 0, RECOVERY);
+        v4().seizeUnlockRequests(ALICE, 1, RECOVERY);
 
         v4().freeze(ALICE);
         vm.expectRevert(abi.encodeWithSelector(FreezableUpgradeable.AccountFrozen.selector, ALICE));
-        v4().seizeUnlockRequest(ALICE, 0, ALICE);
-        vm.expectRevert(stdError.indexOOBError);
-        v4().seizeUnlockRequest(ALICE, 1, RECOVERY);
+        v4().seizeUnlockRequests(ALICE, 1, ALICE);
+        // A count of zero takes nothing and must not pass silently inside a batched incident-response call
+        vm.expectRevert(CustomErrors.NoChange.selector);
+        v4().seizeUnlockRequests(ALICE, 0, RECOVERY);
     }
 
-    function test_seizeUnlockRequest_keeps_other_requests() public {
+    /// @notice Seizing every request must not depend on the caller tracking indices across swap-and-pop
+    function test_seizeUnlockRequests_rejects_account_with_no_requests() public {
+        _depositAs(ALICE, DEPOSIT);
+        vm.startPrank(ADMIN);
+        v4().freeze(ALICE);
+        vm.expectRevert(CustomErrors.NoChange.selector);
+        v4().seizeUnlockRequests(ALICE, type(uint256).max, RECOVERY);
+    }
+
+    /// @notice Requests are taken newest first, so the ones left behind keep their original indices
+    function test_seizeUnlockRequests_keeps_other_requests() public {
         uint96 shares = _depositAs(ALICE, DEPOSIT);
         vm.startPrank(ALICE);
         stakedMonad.requestUnlock(shares / 4, 0);
         stakedMonad.requestUnlock(shares / 2, 0);
         vm.stopPrank();
+        uint96 firstShares = v4().getAllUserUnlockRequests(ALICE)[0].shares;
         uint96 secondShares = v4().getAllUserUnlockRequests(ALICE)[1].shares;
 
         vm.startPrank(ADMIN);
         v4().freeze(ALICE);
-        v4().seizeUnlockRequest(ALICE, 0, RECOVERY);
+        // The newest request sits at index 1, so that is the one a count of 1 takes
+        vm.expectEmit(true, true, false, false, address(stakedMonad));
+        emit StakedMonadV4.UnlockRequestSeized(ALICE, 1, RECOVERY, 0, 0, false);
+        v4().seizeUnlockRequests(ALICE, 1, RECOVERY);
 
         StakedMonadV4.UnlockRequest[] memory remaining = v4().getAllUserUnlockRequests(ALICE);
         assertEq(remaining.length, 1, "Only the seized request is removed");
-        assertEq(remaining[0].shares, secondShares, "Other request intact");
+        assertEq(remaining[0].shares, firstShares, "Surviving request keeps index 0");
+        assertEq(stakedMonad.balanceOf(RECOVERY), secondShares, "Recovery receives the newest request's shares");
+    }
+
+    /// @notice `unlocksCount` above the queue length drains it rather than reverting out of bounds
+    function test_seizeUnlockRequests_drains_whole_queue_when_count_exceeds_length() public {
+        uint96 shares = _depositAs(ALICE, DEPOSIT);
+        vm.startPrank(ALICE);
+        stakedMonad.requestUnlock(shares / 4, 0);
+        stakedMonad.requestUnlock(shares / 4, 0);
+        stakedMonad.requestUnlock(shares / 4, 0);
+        vm.stopPrank();
+        uint96 escrowed = uint96(stakedMonad.balanceOf(address(stakedMonad)));
+
+        vm.startPrank(ADMIN);
+        v4().freeze(ALICE);
+        v4().seizeUnlockRequests(ALICE, type(uint256).max, RECOVERY);
+
+        assertEq(v4().getAllUserUnlockRequests(ALICE).length, 0, "All three seized");
+        assertEq(stakedMonad.balanceOf(RECOVERY), escrowed, "Recovery receives every escrowed share");
+        assertEq(stakedMonad.balanceOf(address(stakedMonad)), 0, "Nothing left in escrow");
+    }
+
+    /// @notice A queue too long for one block is drained over several bounded calls
+    function test_seizeUnlockRequests_drains_queue_across_several_calls() public {
+        uint96 shares = _depositAs(ALICE, DEPOSIT);
+        vm.startPrank(ALICE);
+        for (uint256 i = 0; i < 5; ++i) {
+            stakedMonad.requestUnlock(shares / 8, 0);
+        }
+        vm.stopPrank();
+        uint96 escrowed = uint96(stakedMonad.balanceOf(address(stakedMonad)));
+
+        vm.startPrank(ADMIN);
+        v4().freeze(ALICE);
+        v4().seizeUnlockRequests(ALICE, 2, RECOVERY);
+        assertEq(v4().getAllUserUnlockRequests(ALICE).length, 3, "First call takes two");
+        v4().seizeUnlockRequests(ALICE, 2, RECOVERY);
+        assertEq(v4().getAllUserUnlockRequests(ALICE).length, 1, "Second call takes two");
+        // One request left but a count of two: the count clamps instead of reverting
+        v4().seizeUnlockRequests(ALICE, 2, RECOVERY);
+
+        assertEq(v4().getAllUserUnlockRequests(ALICE).length, 0, "Last call takes the remainder");
+        assertEq(stakedMonad.balanceOf(RECOVERY), escrowed, "Recovery receives every escrowed share");
+    }
+
+    /// @notice A queue mixing open and submitted batches splits correctly in one call
+    function test_seizeUnlockRequests_handles_mixed_open_and_submitted() public {
+        uint96 shares = _depositAs(ALICE, DEPOSIT);
+        vm.prank(ALICE);
+        stakedMonad.requestUnlock(shares / 2, 0);
+        StakedMonadV4.UnlockRequest memory submitted = v4().getAllUserUnlockRequests(ALICE)[0];
+        _submitBatchAndPassWithdrawDelay();
+
+        // A second request lands in the now-open batch
+        vm.prank(ALICE);
+        stakedMonad.requestUnlock(shares / 4, 0);
+        uint96 openShares = v4().getAllUserUnlockRequests(ALICE)[1].shares;
+
+        vm.startPrank(ADMIN);
+        v4().freeze(ALICE);
+        v4().seizeUnlockRequests(ALICE, type(uint256).max, RECOVERY);
+        vm.stopPrank();
+
+        assertEq(v4().getAllUserUnlockRequests(ALICE).length, 0, "Thief has nothing left");
+        assertEq(stakedMonad.balanceOf(RECOVERY), openShares, "Open request returned as shares");
+
+        StakedMonadV4.UnlockRequest[] memory moved = v4().getAllUserUnlockRequests(RECOVERY);
+        assertEq(moved.length, 1, "Submitted request reassigned, open one was cancelled");
+        assertEq(moved[0].spotValue, submitted.spotValue, "Same MON owed");
+        assertEq(moved[0].batchId, submitted.batchId, "Same batch");
     }
 
     function test_cancelUnlockRequest_unchanged_for_normal_users() public {
