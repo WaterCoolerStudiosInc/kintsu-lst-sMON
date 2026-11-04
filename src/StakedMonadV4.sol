@@ -697,7 +697,8 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
     }
 
     /**
-     * @notice Pause the protocol: deposits, unlocks, cancellations, batches, redemptions, sweeps and fee claims
+     * @notice Pause the following protocol features: deposits, unlocks, cancellations, batches, redemptions,
+     *         sweeps, compounds, pool contributions, unbonding of disable nodes, and fee claims
      * @notice Holder-to-holder transfers keep working; see `pauseTransfers()` and `pauseProtocolAndTransfers()`
      * @dev Read the state with `protocolPaused()` (or OpenZeppelin's `paused()`)
      */
@@ -748,10 +749,11 @@ contract StakedMonadV4 is CustomErrors, Registry, StakerUpgradeable, FreezableUp
     }
 
     /**
-     * @notice Take over the unlock requests of a frozen account, newest first
+     * @notice Take over the unlock requests of a frozen account, taken from the end of its request array
      * @notice A request still in the open batch is cancelled and its shares (exit fee included) go to `to`
      * @notice A request whose batch was already submitted (unbonding) moves to `to`, who redeems it as usual
      * @notice `unlocksCount` caps how many requests are taken in one call
+     * @dev Pass `unlocksCount` of at least the length of the account's request array to seize all requests in one call.
      * @dev Works while paused, although redeeming a reassigned request still requires the contract to be unpaused
      */
     function seizeUnlockRequests(address account, uint256 unlocksCount, address to) external onlyRole(ROLE_SEIZE) {
